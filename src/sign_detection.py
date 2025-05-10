@@ -56,74 +56,52 @@ class SignDetector:
         return img
 
     def postprocess(self, outputs):
-        if len(outputs.shape) != 3 or outputs.shape[0] != 1:
-            self.logger.error(f"Unexpected output shape: {outputs.shape}, expected [1, ?, ?]")
-            return [], [], []
-
-        outputs = outputs[0]
+        # Always transpose if output is [1, 19, 8400]
+        if len(outputs.shape) == 3 and outputs.shape[0] == 1 and outputs.shape[1] == 19:
+            outputs = outputs.transpose(0, 2, 1)  # [1, 8400, 19]
+        outputs = outputs[0]  # [8400, 19]
         num_classes = len(self.class_names)
-        expected_channels = num_classes + 4
-
-        if outputs.shape[0] == expected_channels:
-            outputs = outputs.transpose(1, 0)
-        else:
-            self.logger.error(f"Unexpected channel count: {outputs.shape[0]}, expected {expected_channels}")
-            return [], [], []
-
         boxes = outputs[:, :4]
         scores = outputs[:, 4:]
-
         self.logger.debug(f"Raw scores min/max/mean: {scores.min():.4f}/{scores.max():.4f}/{scores.mean():.4f}")
         scores = 1 / (1 + np.exp(-scores))
         self.logger.debug(f"Sigmoid scores min/max/mean: {scores.min():.4f}/{scores.max():.4f}/{scores.mean():.4f}")
-
         confidences = np.max(scores, axis=1)
         class_ids = np.argmax(scores, axis=1)
-
         self.logger.debug(f"Detections before confidence filter: {len(confidences)}")
         mask = confidences >= self.confidence_threshold
         if not np.any(mask):
             self.logger.debug("No detections above confidence threshold")
             return [], [], []
-
         boxes = boxes[mask]
         confidences = confidences[mask]
         class_ids = class_ids[mask]
-
         self.logger.debug(f"Detections after confidence filter: {len(boxes)}")
-
         boxes[:, [0, 2]] *= self.imgsz
         boxes[:, [1, 3]] *= self.imgsz
-
         boxes_xyxy = np.zeros_like(boxes)
         boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2
         boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2
         boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
         boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
-
         indices = cv2.dnn.NMSBoxes(
             boxes_xyxy.tolist(),
             confidences.tolist(),
             self.confidence_threshold,
             self.iou_threshold
         )
-
         indices = indices.flatten() if isinstance(indices, np.ndarray) and indices.ndim > 1 else indices
         if isinstance(indices, tuple):
             indices = indices[0]
-
         self.logger.debug(f"Detections after NMS: {len(indices)}")
-
         if len(indices) == 0:
             self.logger.debug("No detections after NMS")
             return [], [], []
-
         boxes = boxes[indices]
         boxes[:, [0, 2]] /= self.imgsz
         boxes[:, [1, 3]] /= self.imgsz
         confidences = confidences[indices]
         class_ids = class_ids[indices]
-
         return boxes, confidences, class_ids
 
     def detect(self, frame):
