@@ -3,7 +3,12 @@ import base64
 import logging
 import numpy as np
 import yaml
+import time
+from datetime import datetime
 from ultralytics import YOLO
+import onnxruntime
+
+logger = logging.getLogger(__name__)
 
 class SignDetector:
     def __init__(self, config_path):
@@ -23,49 +28,120 @@ class SignDetector:
         self.send_images = yolo_cfg.get('send_images', True)
         self.logger.info(f"Initialized YOLO model with imgsz={self.imgsz}, confidence_threshold={self.confidence_threshold}")
 
+        # Initialize ONNX Runtime session
+        self.session = onnxruntime.InferenceSession(
+            yolo_cfg['model_path'],
+            providers=['CPUExecutionProvider']
+        )
+        
+        # Get model metadata
+        self.input_name = self.session.get_inputs()[0].name
+        self.input_shape = self.session.get_inputs()[0].shape
+        self.iou_threshold = yolo_cfg.get('iou_threshold', 0.5)
+        
+        # Performance tracking
+        self.frame_times = []
+        self.inference_times = []
+        self.last_fps_update = time.time()
+        self.fps_update_interval = 1.0  # Update FPS every second
+
+    def preprocess(self, frame):
+        """Preprocess frame for model input."""
+        # Resize frame to model input size
+        input_size = (self.input_shape[2], self.input_shape[3])
+        resized = cv2.resize(frame, input_size)
+        
+        # Convert to float32 and normalize
+        blob = cv2.dnn.blobFromImage(
+            resized, 
+            1/255.0, 
+            input_size, 
+            swapRB=True, 
+            crop=False
+        )
+        
+        return blob
+
     def detect(self, frame):
-        try:
-            # Resize frame to fixed size expected by the model
-            resized_frame = cv2.resize(frame, (self.imgsz, self.imgsz))
+        """Detect traffic signs in frame."""
+        start_time = time.time()
+        
+        # Preprocess frame
+        blob = self.preprocess(frame)
+        
+        # Run inference
+        inference_start = time.time()
+        outputs = self.session.run(None, {self.input_name: blob})
+        inference_time = time.time() - inference_start
+        
+        # Process detections
+        detections = self.process_outputs(outputs[0], frame.shape)
+        
+        # Update performance metrics
+        self.update_performance_metrics(time.time() - start_time, inference_time)
+        
+        return detections
 
-            # Run inference on resized frame
-            results = self.model(resized_frame, verbose=False)
+    def process_outputs(self, outputs, frame_shape):
+        """Process model outputs into detections."""
+        detections = []
+        
+        # Get original frame dimensions
+        height, width = frame_shape[:2]
+        
+        # Process each detection
+        for detection in outputs[0]:
+            confidence = detection[4]
+            if confidence > self.confidence_threshold:
+                # Get bounding box coordinates
+                x1, y1, x2, y2 = detection[:4]
+                
+                # Convert to pixel coordinates
+                x1 = int(x1 * width)
+                y1 = int(y1 * height)
+                x2 = int(x2 * width)
+                y2 = int(y2 * height)
+                
+                # Get class ID
+                class_id = int(detection[5])
+                
+                detections.append({
+                    "sign_type": class_id,
+                    "confidence": float(confidence),
+                    "bbox": [x1, y1, x2, y2]
+                })
+        
+        return detections
 
-            detection_data = []
-            for result in results:
-                boxes = result.boxes
-                for box in boxes:
-                    confidence = box.conf.item()
-                    if confidence < self.confidence_threshold:
-                        self.logger.debug(
-                            f"Skipping detection with confidence {confidence:.3f} below threshold {self.confidence_threshold}"
-                        )
-                        continue
+    def update_performance_metrics(self, total_time, inference_time):
+        """Update and log performance metrics."""
+        current_time = time.time()
+        
+        # Add times to rolling window
+        self.frame_times.append(total_time)
+        self.inference_times.append(inference_time)
+        
+        # Keep only last 30 frames for metrics
+        if len(self.frame_times) > 30:
+            self.frame_times.pop(0)
+            self.inference_times.pop(0)
+        
+        # Update FPS and log metrics periodically
+        if current_time - self.last_fps_update >= self.fps_update_interval:
+            avg_fps = 1.0 / (sum(self.frame_times) / len(self.frame_times))
+            avg_inference = sum(self.inference_times) / len(self.inference_times) * 1000  # Convert to ms
+            
+            logger.info(f"Performance - FPS: {avg_fps:.1f}, Inference: {avg_inference:.1f}ms")
+            
+            # Reset metrics
+            self.frame_times = []
+            self.inference_times = []
+            self.last_fps_update = current_time
 
-                    class_id = int(box.cls.item())
-                    class_name = self.model.names[class_id]
-
-                    self.logger.info(f"Detected {class_name} with confidence {confidence:.3f}")
-
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-
-                    detection = {
-                        "sign_type": f"{class_name}, {confidence*100:.0f}% certain ({confidence:.2f} confidence)",
-                        "timestamp": np.datetime64('now').astype(str)
-                    }
-
-                    if self.send_images:
-                        cropped = resized_frame[y1:y2, x1:x2]
-                        _, buffer = cv2.imencode('.jpg', cropped)
-                        detection["image"] = base64.b64encode(buffer).decode('utf-8')
-
-                    detection_data.append(detection)
-
-            return detection_data
-
-        except Exception as e:
-            self.logger.error(f"Error in detection: {e}")
-            return []
+    def close(self):
+        """Clean up resources."""
+        if hasattr(self, 'session'):
+            del self.session
 
 def load_config(config_path="config/config.yaml"):
     """

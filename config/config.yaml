@@ -1,21 +1,22 @@
 camera:
-  device_id: 0
+  device_id: "/dev/video1"
   width: 1280
   height: 720
   fps: 30
 yolo:
-  model_path: "models/yolov8s.onnx"
+  model_path: "models/yolov8n.onnx"
   confidence_threshold: 0.5
   iou_threshold: 0.45
   send_images: true
 gps:
   port: "/dev/ttyUSB1"
-  baudrate: 9600
+  baudrate: 115200
   timeout: 1
   power_delay: 2
   agps_delay: 5
 imu:
   i2c_bus: 4
+  i2c_addresses: ["0x68", "0x69"]  # Try both addresses due to floating AD0 pin
   sample_rate: 100
   accel_range: 2
   gyro_range: 250
