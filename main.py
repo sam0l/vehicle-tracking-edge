@@ -238,16 +238,17 @@ class VehicleTracker:
 
 def sim_monitor_thread():
     monitor = SimMonitor()
+    logger = logging.getLogger(__name__)
     while True:
         balance_info = monitor.check_sim_balance()
         data_usage = monitor.get_data_usage()
         network_info = monitor.get_network_info()
         signal_strength = monitor.get_signal_strength()
         if any([balance_info, data_usage, network_info, signal_strength]):
-            monitor.logger.info("Sending collected SIM data to backend...")
+            logger.info("Sending collected SIM data to backend...")
             # You may need to implement or import send_to_backend, or use monitor's method if available
         else:
-            monitor.logger.warning("No SIM data collected in this cycle")
+            logger.warning("No SIM data collected in this cycle")
         time.sleep(3600)
 
 if __name__ == "__main__":
