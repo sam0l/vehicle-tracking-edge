@@ -22,7 +22,7 @@ class SignDetector:
         config = load_config(config_path)
         yolo_cfg = config.get("yolo", {})
         
-        self.model = YOLO(yolo_cfg['onnx_model_path'])
+        self.model = YOLO(yolo_cfg['model_path'])
         self.imgsz = yolo_cfg['imgsz']
         self.confidence_threshold = yolo_cfg['confidence_threshold']
         self.send_images = yolo_cfg.get('send_images', True)

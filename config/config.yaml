@@ -5,8 +5,9 @@ camera:
   fps: 30
 yolo:
   model_path: "models/yolov8n.onnx"
-  confidence_threshold: 0.5
-  iou_threshold: 0.45
+  confidence_threshold: 0.7
+  imgsz: 640
+  iou_threshold: 0.5
   send_images: true
 gps:
   port: "/dev/ttyUSB1"
@@ -26,7 +27,7 @@ sim:
   ussd_balance_code: "*221#"
   check_interval: 3600
 backend:
-  url: "http://localhost:8000"
+  url: "https://vehicle-tracking-backend-bwmz.onrender.com"
   endpoint_prefix: "/api"
   detection_endpoint: "/detections"
   sim_data_endpoint: "/sim-data"
