@@ -1,0 +1,32 @@
+camera:
+  device_id: 1
+  width: 640
+  height: 480
+  fps: 30
+yolo:
+  onnx_model_path: "models/yolov8n.onnx"
+  imgsz: 640
+  confidence_threshold: 0.5
+  iou_threshold: 0.7
+  send_images: false
+gps:
+  port: "/dev/ttyUSB1"
+  baudrate: 115200
+  timeout: 2
+  power_delay: 10
+  agps_delay: 5
+imu:
+  i2c_bus: 4
+  i2c_address: "0x69"
+backend:
+  url: "https://vehicle-tracking-backend-bwmz.onrender.com"
+  endpoint_prefix: "/api"
+  detection_endpoint: "/detections"
+logging:
+  level: "DEBUG"
+  file: "vehicle_tracker.log"
+  offline_file: "offline_data.json"
+  interval:
+    gps: 1.0
+    imu: 0.1
+    camera: 0.2
