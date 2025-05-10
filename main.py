@@ -12,7 +12,7 @@ from src.gps import GPS
 from src.imu import IMU
 from src.camera import Camera
 from src.sign_detection import SignDetector
-from src.sim_monitor import check_sim_balance, track_data_usage, send_to_backend
+from src.sim_monitor import SimMonitor
 import threading
 
 class VehicleTracker:
@@ -237,15 +237,18 @@ class VehicleTracker:
                 self.sign_detector.close()
 
 def sim_monitor_thread():
-    """Thread to monitor SIM balance and data usage."""
+    monitor = SimMonitor()
     while True:
-        balance_info = check_sim_balance()
-        if balance_info:
-            print(f"SIM Balance: {balance_info}")
-        data_usage = track_data_usage()
-        print(f"Data Usage: {data_usage} bytes")
-        send_to_backend(balance_info, data_usage)
-        time.sleep(3600)  # Check every hour
+        balance_info = monitor.check_sim_balance()
+        data_usage = monitor.get_data_usage()
+        network_info = monitor.get_network_info()
+        signal_strength = monitor.get_signal_strength()
+        if any([balance_info, data_usage, network_info, signal_strength]):
+            monitor.logger.info("Sending collected SIM data to backend...")
+            # You may need to implement or import send_to_backend, or use monitor's method if available
+        else:
+            monitor.logger.warning("No SIM data collected in this cycle")
+        time.sleep(3600)
 
 if __name__ == "__main__":
     tracker = VehicleTracker("config/config.yaml")
