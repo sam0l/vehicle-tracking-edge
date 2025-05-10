@@ -134,10 +134,10 @@ if __name__ == "__main__":
         # Instantiate SignDetector using config values exactly as you specified
         yolo_cfg = config.get("yolo", {})
         detector = SignDetector(
-            onnx_model_path=yolo_cfg['model_path'],
-            imgsz=yolo_cfg['imgsz'],
-            confidence_threshold=yolo_cfg['confidence_threshold'],
-            send_images=yolo_cfg.get('send_images', True)
+            onnx_model_path="models/yolov8n.onnx",
+            imgsz=640,
+            confidence_threshold=0.7,
+            send_images=True
         )
         logger.info("SignDetector initialized successfully.")
     except Exception as e:

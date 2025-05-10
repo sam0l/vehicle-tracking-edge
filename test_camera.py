@@ -18,7 +18,12 @@ def test_camera():
         camera_config["height"],
         camera_config["fps"]
     )
-    detector = SignDetector(config_path)
+    detector = SignDetector(
+        onnx_model_path="models/yolov8n.onnx",
+        imgsz=640,
+        confidence_threshold=0.7,
+        send_images=True
+    )
     
     if camera.initialize() and detector.initialize():
         while True:
