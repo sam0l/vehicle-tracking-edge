@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Typography, CircularProgress, Box } from '@mui/material';
+import { Card, Typography, CircularProgress, Box, LinearProgress } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import DataUsageIcon from '@mui/icons-material/DataUsage';
+import SpeedIcon from '@mui/icons-material/Speed';
 
 const StyledCard = styled(Card)(({ theme }) => ({
   padding: theme.spacing(2),
@@ -30,6 +31,14 @@ const formatBytes = (bytes) => {
   if (bytes === 0) return '0 B/s';
   const k = 1024;
   const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+};
+
+const formatTotalBytes = (bytes) => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 };
@@ -108,15 +117,37 @@ const SimDataDisplay = () => {
       </DataContainer>
 
       {consumption && (
-        <RateContainer>
-          <TrendingUpIcon color="action" />
-          <Typography variant="body2" color="textSecondary">
-            Current Usage Rate:
-          </Typography>
-          <Typography variant="body2" color="primary">
-            {formatBytes(consumption.current_rate)}
-          </Typography>
-        </RateContainer>
+        <>
+          <RateContainer>
+            <TrendingUpIcon color="action" />
+            <Typography variant="body2" color="textSecondary">
+              Current Usage Rate:
+            </Typography>
+            <Typography variant="body2" color="primary">
+              {formatBytes(consumption.current_rate)}
+            </Typography>
+          </RateContainer>
+
+          <RateContainer>
+            <SpeedIcon color="action" />
+            <Typography variant="body2" color="textSecondary">
+              Total Data Used:
+            </Typography>
+            <Typography variant="body2" color="primary">
+              {formatTotalBytes(consumption.total_bytes)}
+            </Typography>
+          </RateContainer>
+
+          {consumption.current_rate > 0 && (
+            <Box sx={{ mt: 2 }}>
+              <LinearProgress 
+                variant="determinate" 
+                value={Math.min((consumption.current_rate / (1024 * 1024)) * 100, 100)} 
+                color="primary"
+              />
+            </Box>
+          )}
+        </>
       )}
 
       {simData && (
