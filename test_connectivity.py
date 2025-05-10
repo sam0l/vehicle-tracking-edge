@@ -3,6 +3,16 @@ import socket
 import serial
 import time
 import logging
+import yaml
+
+def load_config(config_path="config/config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+# Load config
+config = load_config()
+gps_config = config.get("gps", {})
+backend_config = config.get("backend", {})
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,7 +27,8 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
         logger.error(f"No internet connectivity: {e}")
         return False
 
-def check_backend(url="https://vehicle-tracking-backend-bwmz.onrender.com/detections"):
+def check_backend():
+    url = f"{backend_config['url']}{backend_config['endpoint_prefix']}{backend_config['detection_endpoint']}"
     try:
         test_data = {
             "latitude": 48.123456,
@@ -33,9 +44,9 @@ def check_backend(url="https://vehicle-tracking-backend-bwmz.onrender.com/detect
         logger.error(f"Backend unreachable: {e}")
         return False
 
-def check_lte(port="/dev/ttyUSB1", baudrate=115200):
+def check_lte():
     try:
-        ser = serial.Serial(port, baudrate, timeout=1)
+        ser = serial.Serial(gps_config["port"], gps_config["baudrate"], timeout=1)
         # Check signal quality
         ser.write(b"AT+CSQ\r\n")
         time.sleep(1)

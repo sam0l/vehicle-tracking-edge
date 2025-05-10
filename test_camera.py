@@ -7,22 +7,19 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 def test_camera():
-    with open("config/config.yaml", "r") as f:
+    config_path = "config/config.yaml"
+    with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     camera_config = config["camera"]
-    yolo_config = config["yolo"]
+    
     camera = Camera(
-        camera_config["device"],
+        camera_config["device_id"],
         camera_config["width"],
         camera_config["height"],
         camera_config["fps"]
     )
-    detector = SignDetector(
-        yolo_config["model_path"],
-        yolo_config["rknn_model_path"],
-        yolo_config["classes"],
-        yolo_config["confidence_threshold"]
-    )
+    detector = SignDetector(config_path)
+    
     if camera.initialize() and detector.initialize():
         while True:
             frame = camera.get_frame()

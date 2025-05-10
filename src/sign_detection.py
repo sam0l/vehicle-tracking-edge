@@ -6,23 +6,22 @@ import yaml
 from ultralytics import YOLO
 
 class SignDetector:
-    def __init__(self, model_path, imgsz, confidence_threshold, send_images=True, config_path=None):
+    def __init__(self, config_path):
         """
         Initialize the SignDetector.
 
         Args:
-            model_path (str): Path to YOLO model weights.
-            imgsz (int): Image size for resizing.
-            confidence_threshold (float): Minimum confidence for detection.
-            send_images (bool): Whether to include cropped images in output.
-            config_path (str, optional): Config path for compatibility (not used internally).
+            config_path (str): Path to the YAML config file.
         """
         self.logger = logging.getLogger(__name__)
-        self.model = YOLO(model_path)
-        self.imgsz = imgsz
-        self.confidence_threshold = confidence_threshold
-        self.send_images = send_images
-        self.logger.info(f"Initialized YOLO model with imgsz={imgsz}, confidence_threshold={confidence_threshold}")
+        config = load_config(config_path)
+        yolo_cfg = config.get("yolo", {})
+        
+        self.model = YOLO(yolo_cfg['onnx_model_path'])
+        self.imgsz = yolo_cfg['imgsz']
+        self.confidence_threshold = yolo_cfg['confidence_threshold']
+        self.send_images = yolo_cfg.get('send_images', True)
+        self.logger.info(f"Initialized YOLO model with imgsz={self.imgsz}, confidence_threshold={self.confidence_threshold}")
 
     def detect(self, frame):
         try:
@@ -94,10 +93,6 @@ if __name__ == "__main__":
         # Instantiate SignDetector using config values exactly as you specified
         yolo_cfg = config.get("yolo", {})
         detector = SignDetector(
-            model_path=yolo_cfg['onnx_model_path'],
-            imgsz=yolo_cfg['imgsz'],
-            confidence_threshold=yolo_cfg['confidence_threshold'],
-            send_images=yolo_cfg.get('send_images', True),
             config_path=config.get('config_path', None)  # Optional, for backward compatibility
         )
         logger.info("SignDetector initialized successfully.")

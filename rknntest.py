@@ -1,11 +1,21 @@
 import cv2
 import numpy as np
+import yaml
 from rknnlite.api import RKNNLite
 
+def load_config(config_path="config/config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+# Load config
+config = load_config()
+yolo_cfg = config.get("yolo", {})
+camera_cfg = config.get("camera", {})
+
 # Model and camera config
-RKNN_MODEL_PATH = 'models/rknn_tdet.rknn'
-CAMERA_ID = 1
-INPUT_SIZE = (640, 640)  # width, height
+RKNN_MODEL_PATH = 'models/yolov8n_traffic_signs.rknn'
+CAMERA_ID = camera_cfg['device_id']
+INPUT_SIZE = (yolo_cfg['imgsz'], yolo_cfg['imgsz'])  # width, height
 
 # Your model's class names
 CLASS_NAMES = {
@@ -69,7 +79,10 @@ def nms(boxes, scores, iou_threshold=0.5):
 
     return keep
 
-def postprocess_yolov8(output, conf_threshold=0.3, iou_threshold=0.5, input_size=INPUT_SIZE):
+def postprocess_yolov8(output, conf_threshold=None, iou_threshold=None, input_size=INPUT_SIZE):
+    conf_threshold = conf_threshold or yolo_cfg['confidence_threshold']
+    iou_threshold = iou_threshold or yolo_cfg['iou_threshold']
+    
     output = output[0]  # shape (19, N)
     num_classes = 15
     num_preds = output.shape[1]
@@ -168,6 +181,10 @@ def main():
     if not cap.isOpened():
         print('Failed to open camera')
         return
+
+    # Set camera resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_cfg['width'])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_cfg['height'])
 
     print('Starting inference loop. Press Ctrl+C to stop.')
 

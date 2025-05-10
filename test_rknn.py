@@ -4,21 +4,31 @@ from rknnlite.api import RKNNLite
 import time
 import logging
 import argparse
+import yaml
+
+def load_config(config_path="config/config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+# Load config
+config = load_config()
+yolo_cfg = config.get("yolo", {})
+camera_cfg = config.get("camera", {})
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Constants
-IMG_SIZE = 640  # Input size for YOLOv8 model
+IMG_SIZE = yolo_cfg['imgsz']  # Input size for YOLOv8 model
 CLASSES = [
     'Green Light', 'Red Light', 'Speed Limit 10', 'Speed Limit 100', 'Speed Limit 110',
     'Speed Limit 120', 'Speed Limit 20', 'Speed Limit 30', 'Speed Limit 40', 'Speed Limit 50',
     'Speed Limit 60', 'Speed Limit 70', 'Speed Limit 80', 'Speed Limit 90', 'Stop'
 ]
-RKNN_MODEL_PATH = 'models/newnewnew.rknn'
-CONF_THRES = 0.01  # Lowered to capture scores up to 0.029
-IOU_THRES = 0.45
+RKNN_MODEL_PATH = 'models/yolov8n_traffic_signs.rknn'
+CONF_THRES = yolo_cfg['confidence_threshold']
+IOU_THRES = yolo_cfg['iou_threshold']
 
 def preprocess_image(image, input_size):
     """Preprocess image for YOLOv8 model (float32 input)."""
@@ -172,11 +182,15 @@ def main(test_image=None):
         log_detections(boxes, scores, classes, fps)
     else:
         logger.debug("Initializing camera")
-        cap = cv2.VideoCapture(1)
+        cap = cv2.VideoCapture(camera_cfg['device_id'])
         if not cap.isOpened():
             logger.error("Failed to open camera")
             rknn.release()
             return
+        
+        # Set camera resolution
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_cfg['width'])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_cfg['height'])
         
         try:
             while True:

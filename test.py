@@ -1,6 +1,16 @@
+import yaml
 from rknnlite.api import RKNNLite
 import cv2
 import numpy as np
+
+def load_config(config_path="config/config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+# Load config
+config = load_config()
+yolo_cfg = config.get("yolo", {})
+camera_cfg = config.get("camera", {})
 
 # Class names from data.yaml
 CLASS_NAMES = ['Green Light', 'Red Light', 'Speed Limit 10', 'Speed Limit 100', 'Speed Limit 110', 
@@ -20,17 +30,20 @@ if ret != 0:
     exit(ret)
 
 # Initialize camera
-cap = cv2.VideoCapture('/dev/video1')
+cap = cv2.VideoCapture(camera_cfg['device_id'])
 if not cap.isOpened():
     print('Failed to open camera!')
     exit(-1)
 
-# Set camera resolution (assuming 640x640 for simplicity)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
+# Set camera resolution
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_cfg['width'])
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_cfg['height'])
 
-def postprocess(outputs, conf_thres=0.5, iou_thres=0.5):
+def postprocess(outputs, conf_thres=None, iou_thres=None):
     """Post-process YOLOv8 outputs (assuming standard YOLOv8 output format)."""
+    conf_thres = conf_thres or yolo_cfg['confidence_threshold']
+    iou_thres = iou_thres or yolo_cfg['iou_threshold']
+    
     boxes, scores, classes = outputs[0].transpose(1, 0)  # [1, 8400, 4+nc] -> [4+nc, 8400]
     boxes = boxes[:4].T  # [8400, 4]
     scores = scores.T  # [8400, nc]
@@ -61,7 +74,7 @@ try:
             continue
 
         # Preprocess frame
-        img = cv2.resize(frame, (640, 640))
+        img = cv2.resize(frame, (yolo_cfg['imgsz'], yolo_cfg['imgsz']))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.astype(np.float32) / 255.0  # Normalize to [0, 1]
         img = img.transpose(2, 0, 1)  # HWC to CHW (NCHW for RKNN)
@@ -70,7 +83,7 @@ try:
         outputs = rknn.inference(inputs=[img])
 
         # Post-process outputs
-        detections = postprocess(outputs, conf_thres=0.5, iou_thres=0.5)
+        detections = postprocess(outputs)
 
         # Print detections
         for det in detections:

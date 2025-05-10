@@ -1,10 +1,21 @@
 import serial
 import time
+import yaml
+
+def load_config(config_path="config/config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+# Load config
+config = load_config()
+gps_config = config.get("gps", {})
 
 # GPS module settings
-PORT = "/dev/ttyUSB1"
-BAUDRATE = 115200
-TIMEOUT = 2
+PORT = gps_config["port"]
+BAUDRATE = gps_config["baudrate"]
+TIMEOUT = gps_config["timeout"]
+POWER_DELAY = gps_config["power_delay"]
+AGPS_DELAY = gps_config["agps_delay"]
 
 def send_at_command(ser, command, expected_response="OK", timeout=2):
     try:
@@ -44,7 +55,7 @@ def main():
         response, success = send_at_command(ser, "AT+CGNSSPWR=1")
         if success:
             print("GNSS powered on successfully")
-            time.sleep(2)  # Wait for module to stabilize
+            time.sleep(POWER_DELAY)  # Wait for module to stabilize
         else:
             print(f"Failed to power on GNSS: {response}")
             return
@@ -54,7 +65,7 @@ def main():
         response, success = send_at_command(ser, "AT+CAGPS")
         if success:
             print("AGPS enabled successfully")
-            time.sleep(2)  # Wait for AGPS to initialize
+            time.sleep(AGPS_DELAY)  # Wait for AGPS to initialize
         else:
             print(f"Failed to enable AGPS: {response}")
             return
@@ -73,7 +84,7 @@ def main():
         
     except serial.SerialException as e:
         print(f"Serial error: {e}")
-        print("Check if /dev/ttyUSB1 is correct, ModemManager is stopped, and module is powered")
+        print(f"Check if {PORT} is correct, ModemManager is stopped, and module is powered")
     except Exception as e:
         print(f"Error: {e}")
     finally:
