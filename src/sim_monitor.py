@@ -4,6 +4,19 @@ import time
 import re
 from typing import Optional, Dict
 import threading
+import os
+import json
+import requests
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Configuration
+SERIAL_PORT = "/dev/ttyUSB0"  # Adjust as needed
+BAUD_RATE = 115200
+USSD_CODE = "*123#"  # Smart Telecom balance check USSD code
+BACKEND_URL = "https://vehicle-tracking-backend-bwmz.onrender.com/api"  # Adjust as needed
 
 class SimMonitor:
     def __init__(self, port: str, baudrate: int = 115200):
@@ -108,17 +121,75 @@ class SimMonitor:
             self.serial.close()
             self.serial = None
 
-if __name__ == "__main__":
-    # Setup logging
-    logging.basicConfig(level=logging.DEBUG)
-    
-    # Test the SIM monitor
-    monitor = SimMonitor()
+def send_at_command(ser, command, timeout=5):
+    """Send AT command and return response."""
+    ser.write((command + "\r\n").encode())
+    time.sleep(0.5)
+    response = ""
+    start_time = time.time()
+    while (time.time() - start_time) < timeout:
+        if ser.in_waiting:
+            response += ser.read(ser.in_waiting).decode(errors="ignore")
+            if "OK" in response or "ERROR" in response:
+                break
+        time.sleep(0.1)
+    return response
+
+def check_sim_balance():
+    """Check SIM balance using USSD."""
     try:
-        balance = monitor.get_data_balance()
-        if balance:
-            print(f"Data Balance: {balance['balance']} {balance['unit']}")
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        # Ensure module is ready
+        send_at_command(ser, "AT")
+        # Send USSD command
+        response = send_at_command(ser, f'AT+CUSD=1,"{USSD_CODE}",15')
+        ser.close()
+        # Parse response for balance info
+        balance_info = parse_balance_response(response)
+        return balance_info
+    except Exception as e:
+        logger.error(f"Error checking SIM balance: {e}")
+        return None
+
+def parse_balance_response(response):
+    """Parse USSD response for balance info."""
+    # Look for keywords like UNLI, UNLIMITED, MAGIC DATA, DATA
+    keywords = ["UNLI", "UNLIMITED", "MAGIC DATA", "DATA"]
+    for keyword in keywords:
+        if keyword in response:
+            return f"Found {keyword} in balance info: {response}"
+    return "No balance info found"
+
+def track_data_usage():
+    """Track data usage (simplified example)."""
+    global data_usage
+    # Simulate data usage (replace with actual tracking logic)
+    data_usage += 1000  # Example: 1KB per call
+    return data_usage
+
+def send_to_backend(balance_info, data_usage):
+    """Send balance and data usage to backend."""
+    try:
+        payload = {
+            "balance": balance_info,
+            "data_usage": data_usage
+        }
+        response = requests.post(f"{BACKEND_URL}/sim-data", json=payload)
+        if response.status_code == 200:
+            logger.info("Data sent to backend successfully")
         else:
-            print("Failed to get data balance")
-    finally:
-        monitor.close() 
+            logger.error(f"Failed to send data to backend: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error sending data to backend: {e}")
+
+def main():
+    """Main function to check balance and track data usage."""
+    balance_info = check_sim_balance()
+    if balance_info:
+        logger.info(f"SIM Balance: {balance_info}")
+    data_usage = track_data_usage()
+    logger.info(f"Data Usage: {data_usage} bytes")
+    send_to_backend(balance_info, data_usage)
+
+if __name__ == "__main__":
+    main() 
