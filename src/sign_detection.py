@@ -107,7 +107,7 @@ class SignDetector:
         
         # Process each detection
         for detection in outputs[0]:
-            confidence = detection[4]
+            confidence = float(detection[4])
             if confidence > self.confidence_threshold:
                 # Get bounding box coordinates
                 x1, y1, x2, y2 = detection[:4]
@@ -122,9 +122,14 @@ class SignDetector:
                 class_id = int(detection[5])
                 class_name = self.class_names.get(class_id, f"unknown_{class_id}")
                 
+                # Log detection details
+                self.logger.info(f"Detected {class_name} (ID: {class_id}) with confidence {confidence:.2f}")
+                
                 detections.append({
-                    "sign_type": f"{class_name}, {confidence*100:.0f}% certain ({confidence:.2f} confidence)",
-                    "confidence": float(confidence),
+                    "sign_type": f"{class_name}, {confidence*100:.1f}% certain",
+                    "confidence": confidence,
+                    "class_id": class_id,
+                    "class_name": class_name,
                     "bbox": [x1, y1, x2, y2],
                     "timestamp": datetime.now().isoformat()
                 })
