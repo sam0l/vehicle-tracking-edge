@@ -179,9 +179,7 @@ if __name__ == "__main__":
     try:
         # Instantiate SignDetector using config values exactly as you specified
         yolo_cfg = config.get("yolo", {})
-        detector = SignDetector(
-            config_path='config/config.yaml'
-        )
+        detector = SignDetector(config_path='config/config.yaml')
         logger.info("SignDetector initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize SignDetector: {e}")

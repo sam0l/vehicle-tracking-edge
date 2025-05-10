@@ -51,13 +51,7 @@ class VehicleTracker:
         )
         
         try:
-            yolo_cfg = self.config['yolo']
-            self.sign_detector = SignDetector(
-                onnx_model_path=yolo_cfg['model_path'],
-                imgsz=yolo_cfg['imgsz'],
-                confidence_threshold=yolo_cfg['confidence_threshold'],
-                send_images=yolo_cfg.get('send_images', True)
-            )
+            self.sign_detector = SignDetector(config_path)
         except Exception as e:
             self.logger.error(f"Failed to initialize SignDetector: {e}")
             self.logger.info("Continuing without sign detection")
