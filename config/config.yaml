@@ -1,42 +1,43 @@
 camera:
-  device_id: 1
+  device_id: 0
   width: 640
   height: 480
   fps: 30
 yolo:
-  onnx_model_path: "models/yolov8n.onnx"
-  imgsz: 640
-  confidence_threshold: 0.7
-  iou_threshold: 0.7
+  model_path: "models/yolov5s.onnx"
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
   send_images: true
 gps:
-  port: "/dev/ttyUSB1"
-  baudrate: 115200
-  timeout: 2
-  power_delay: 10
+  port: "/dev/ttyUSB0"
+  baudrate: 9600
+  timeout: 1
+  power_delay: 2
   agps_delay: 5
 imu:
-  i2c_bus: 4
-  i2c_address: "0x69"
+  i2c_bus: 1
+  sample_rate: 100
+  accel_range: 2
+  gyro_range: 250
 sim:
-  port: "/dev/ttyUSB0"
+  port: "/dev/ttyUSB1"
   baudrate: 115200
-  check_interval: 300  # Check every 5 minutes
+  ussd_balance_code: "*221#"
+  check_interval: 3600
 backend:
-  url: "https://vehicle-tracking-backend-bwmz.onrender.com"
+  url: "http://localhost:8000"
   endpoint_prefix: "/api"
   detection_endpoint: "/detections"
   sim_data_endpoint: "/sim-data"
 logging:
-  level: INFO
+  level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "vehicle_tracker.log"
   offline_file: "offline_data.json"
   interval:
-    gps: 1.0
+    gps: 1
     imu: 0.1
-    camera: 0.2
-    sim: 300.0
+    camera: 5
 
 api:
   port: 5000

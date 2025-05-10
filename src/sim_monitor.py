@@ -1,195 +1,174 @@
 import serial
 import logging
 import time
-import re
-from typing import Optional, Dict
-import threading
-import os
-import json
 import requests
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuration
-SERIAL_PORT = "/dev/ttyUSB0"  # Adjust as needed
-BAUD_RATE = 115200
-USSD_CODE = "*123#"  # Smart Telecom balance check USSD code
-BACKEND_URL = "https://vehicle-tracking-backend-bwmz.onrender.com/api"  # Adjust as needed
-
 class SimMonitor:
-    def __init__(self, port: str, baudrate: int = 115200):
+    def __init__(self, port="/dev/ttyUSB1", baudrate=115200):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
-        self.logger = logging.getLogger(__name__)
-        self.data_consumption = {
-            'total_bytes': 0,
-            'last_reset': time.time(),
-            'current_rate': 0  # bytes per second
-        }
-        self._lock = threading.Lock()
-        
-    def connect(self) -> bool:
-        """Initialize serial connection to SIM module."""
+        self.initialize()
+
+    def initialize(self):
         try:
             self.serial = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
                 timeout=1
             )
             # Test AT command
-            response = self._send_at_command('AT')
-            return 'OK' in response
+            response = self.send_at_command("AT")
+            if "OK" not in response:
+                raise Exception("Modem not responding to AT command")
+            logger.info("SIM monitor initialized successfully")
+            return True
         except Exception as e:
-            self.logger.error(f"Failed to connect to SIM module: {e}")
+            logger.error(f"Failed to initialize SIM monitor: {e}")
             return False
 
-    def _send_at_command(self, command: str, timeout: int = 5) -> str:
-        """Send AT command and get response."""
-        if not self.serial:
-            raise Exception("Serial connection not initialized")
-        
-        self.serial.write(f"{command}\r\n".encode())
-        time.sleep(0.1)
-        
-        response = ""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self.serial.in_waiting:
-                response += self.serial.read(self.serial.in_waiting).decode()
-                if 'OK' in response or 'ERROR' in response:
-                    break
-            time.sleep(0.1)
-        
-        return response
-
-    def get_data_balance(self) -> Optional[Dict]:
-        """Get remaining data balance from SIM card."""
+    def send_at_command(self, command, wait_time=1):
         try:
-            # First check if we're registered to network
-            response = self._send_at_command('AT+CREG?')
-            if '+CREG: 0,1' not in response and '+CREG: 0,5' not in response:
-                self.logger.warning("SIM not registered to network")
+            self.serial.write(f"{command}\r\n".encode())
+            time.sleep(wait_time)
+            response = ""
+            while self.serial.in_waiting:
+                response += self.serial.read(self.serial.in_waiting).decode()
+            return response.strip()
+        except Exception as e:
+            logger.error(f"Error sending AT command {command}: {e}")
+            return None
+
+    def check_sim_balance(self):
+        """Get SIM balance using USSD command."""
+        try:
+            # First check if SIM is ready
+            response = self.send_at_command("AT+CPIN?")
+            if "READY" not in response:
+                logger.error("SIM not ready")
                 return None
 
-            # Get data balance using USSD code (example for checking balance)
-            # Note: The actual USSD code may vary by carrier
-            response = self._send_at_command('AT+CUSD=1,"*100#",15')
-            
-            # Parse the response to extract balance
-            # This is a simplified example - actual parsing depends on carrier response format
-            balance_match = re.search(r'(\d+(?:\.\d+)?)\s*(MB|GB)', response)
-            if balance_match:
-                amount, unit = balance_match.groups()
+            # Get SIM balance using USSD command
+            response = self.send_at_command('AT+CUSD=1,"*221#",15', wait_time=5)
+            if response:
+                # Just return the raw response
                 return {
-                    'balance': float(amount),
-                    'unit': unit,
-                    'timestamp': int(time.time())
+                    "balance": response,
+                    "timestamp": datetime.now().isoformat()
                 }
             return None
         except Exception as e:
-            self.logger.error(f"Error getting data balance: {e}")
+            logger.error(f"Error checking SIM balance: {e}")
             return None
 
-    def update_data_consumption(self, bytes_sent: int, bytes_received: int):
-        """Update data consumption statistics."""
-        with self._lock:
-            self.data_consumption['total_bytes'] += (bytes_sent + bytes_received)
-            current_time = time.time()
-            time_diff = current_time - self.data_consumption['last_reset']
-            
-            if time_diff >= 1:  # Update rate every second
-                self.data_consumption['current_rate'] = (
-                    self.data_consumption['total_bytes'] / time_diff
-                )
-                self.data_consumption['last_reset'] = current_time
-                self.data_consumption['total_bytes'] = 0
+    def get_data_usage(self):
+        """Get data usage statistics."""
+        try:
+            # Get PDP context info
+            response = self.send_at_command("AT+CGDCONT?")
+            if not response:
+                return None
 
-    def get_data_consumption(self) -> Dict:
-        """Get current data consumption statistics."""
-        with self._lock:
+            # Just return the raw response
             return {
-                'current_rate': self.data_consumption['current_rate'],
-                'timestamp': int(time.time())
+                "usage": response,
+                "timestamp": datetime.now().isoformat()
             }
+        except Exception as e:
+            logger.error(f"Error getting data usage: {e}")
+            return None
+
+    def get_signal_strength(self):
+        """Get signal strength."""
+        try:
+            response = self.send_at_command("AT+CSQ")
+            if response:
+                return {
+                    "signal": response,
+                    "timestamp": datetime.now().isoformat()
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting signal strength: {e}")
+            return None
+
+    def get_network_info(self):
+        """Get network information."""
+        try:
+            # Get network registration status and operator info
+            reg_status = self.send_at_command("AT+CREG?")
+            operator = self.send_at_command("AT+COPS?")
+
+            return {
+                "registration": reg_status,
+                "operator": operator,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error getting network info: {e}")
+            return None
 
     def close(self):
-        """Close serial connection."""
-        if self.serial:
+        """Close the serial connection."""
+        if self.serial and self.serial.is_open:
             self.serial.close()
-            self.serial = None
 
-def send_at_command(ser, command, timeout=5):
-    """Send AT command and return response."""
-    ser.write((command + "\r\n").encode())
-    time.sleep(0.5)
-    response = ""
-    start_time = time.time()
-    while (time.time() - start_time) < timeout:
-        if ser.in_waiting:
-            response += ser.read(ser.in_waiting).decode(errors="ignore")
-            if "OK" in response or "ERROR" in response:
-                break
-        time.sleep(0.1)
-    return response
-
-def check_sim_balance():
-    """Check SIM balance using USSD."""
+def send_to_backend(balance_info, data_usage, network_info, signal_strength):
+    """Send SIM data to backend."""
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        # Ensure module is ready
-        send_at_command(ser, "AT")
-        # Send USSD command
-        response = send_at_command(ser, f'AT+CUSD=1,"{USSD_CODE}",15')
-        ser.close()
-        # Parse response for balance info
-        balance_info = parse_balance_response(response)
-        return balance_info
-    except Exception as e:
-        logger.error(f"Error checking SIM balance: {e}")
-        return None
-
-def parse_balance_response(response):
-    """Parse USSD response for balance info."""
-    # Look for keywords like UNLI, UNLIMITED, MAGIC DATA, DATA
-    keywords = ["UNLI", "UNLIMITED", "MAGIC DATA", "DATA"]
-    for keyword in keywords:
-        if keyword in response:
-            return f"Found {keyword} in balance info: {response}"
-    return "No balance info found"
-
-def track_data_usage():
-    """Track data usage (simplified example)."""
-    global data_usage
-    # Simulate data usage (replace with actual tracking logic)
-    data_usage += 1000  # Example: 1KB per call
-    return data_usage
-
-def send_to_backend(balance_info, data_usage):
-    """Send balance and data usage to backend."""
-    try:
-        payload = {
+        url = "http://localhost:8000/api/sim-data"  # Update with your backend URL
+        data = {
             "balance": balance_info,
-            "data_usage": data_usage
+            "data_usage": data_usage,
+            "network_info": network_info,
+            "signal_strength": signal_strength,
+            "timestamp": datetime.now().isoformat()
         }
-        response = requests.post(f"{BACKEND_URL}/sim-data", json=payload)
-        if response.status_code == 200:
-            logger.info("Data sent to backend successfully")
-        else:
-            logger.error(f"Failed to send data to backend: {response.status_code}")
+        response = requests.post(url, json=data)
+        response.raise_for_status()
+        logger.info("SIM data sent to backend successfully")
+        return True
     except Exception as e:
-        logger.error(f"Error sending data to backend: {e}")
+        logger.error(f"Error sending SIM data to backend: {e}")
+        return False
 
-def main():
-    """Main function to check balance and track data usage."""
-    balance_info = check_sim_balance()
-    if balance_info:
-        logger.info(f"SIM Balance: {balance_info}")
-    data_usage = track_data_usage()
-    logger.info(f"Data Usage: {data_usage} bytes")
-    send_to_backend(balance_info, data_usage)
+def sim_monitor_thread():
+    """Thread to monitor SIM data."""
+    monitor = SimMonitor()
+    if not monitor.initialize():
+        logger.error("Failed to initialize SIM monitor")
+        return
+
+    try:
+        while True:
+            balance_info = monitor.check_sim_balance()
+            data_usage = monitor.get_data_usage()
+            network_info = monitor.get_network_info()
+            signal_strength = monitor.get_signal_strength()
+
+            if any([balance_info, data_usage, network_info, signal_strength]):
+                send_to_backend(balance_info, data_usage, network_info, signal_strength)
+
+            time.sleep(3600)  # Check every hour
+    except Exception as e:
+        logger.error(f"Error in SIM monitor thread: {e}")
+    finally:
+        monitor.close()
 
 if __name__ == "__main__":
-    main() 
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Run the monitor
+    sim_monitor_thread() 
