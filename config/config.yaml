@@ -18,10 +18,15 @@ gps:
 imu:
   i2c_bus: 4
   i2c_address: "0x69"
+sim:
+  port: "/dev/ttyUSB0"
+  baudrate: 115200
+  check_interval: 300  # Check every 5 minutes
 backend:
   url: "https://vehicle-tracking-backend-bwmz.onrender.com"
   endpoint_prefix: "/api"
   detection_endpoint: "/detections"
+  sim_data_endpoint: "/sim-data"
 logging:
   level: "DEBUG"
   file: "vehicle_tracker.log"
@@ -30,3 +35,4 @@ logging:
     gps: 1.0
     imu: 0.1
     camera: 0.2
+    sim: 300.0
