@@ -53,6 +53,7 @@ class VehicleTracker:
             with open(self.offline_file, 'w') as f:
                 json.dump([], f)
         self.camera_initialized = False
+        self.sim_monitor = SimMonitor()
 
     def setup_logging(self):
         logging.basicConfig(
@@ -175,13 +176,23 @@ class VehicleTracker:
         except Exception as e:
             self.logger.error(f"Error updating offline data file: {e}")
 
+    def send_sim_data(self, sim_data):
+        try:
+            url = f"{self.config['backend']['url']}{self.config['backend']['endpoint_prefix']}{self.config['backend']['sim_data_endpoint']}"
+            response = requests.post(url, json=sim_data)
+            response.raise_for_status()
+            self.logger.info(f"Sent SIM data to backend: {sim_data}")
+        except Exception as e:
+            self.logger.error(f"Failed to send SIM data: {e}")
+
     def run(self):
         if not self.initialize():
             self.logger.error("Initialization failed, exiting")
             return
 
-        last_gps = last_imu = last_camera = last_camera_init = 0
+        last_gps = last_imu = last_camera = last_camera_init = last_sim = 0
         camera_init_interval = 30  # Retry camera every 30 seconds if failed
+        sim_send_interval = 3600  # Send SIM data every hour
         try:
             while True:
                 current_time = time.time()
@@ -219,6 +230,24 @@ class VehicleTracker:
                     else:
                         self.logger.warning("Failed to capture camera frame")
                     last_camera = current_time
+
+                # SIM data: send every sim_send_interval seconds
+                if current_time - last_sim >= sim_send_interval:
+                    sim_data = {}
+                    balance_info = self.sim_monitor.check_sim_balance()
+                    data_usage = self.sim_monitor.get_data_usage()
+                    network_info = self.sim_monitor.get_network_info()
+                    signal_strength = self.sim_monitor.get_signal_strength()
+                    if any([balance_info, data_usage, network_info, signal_strength]):
+                        sim_data = {
+                            "balance": balance_info,
+                            "data_usage": data_usage,
+                            "network_info": network_info,
+                            "signal_strength": signal_strength,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        self.send_sim_data(sim_data)
+                    last_sim = current_time
 
                 if data.get("gps") or data.get("imu") or data.get("signs"):
                     if not self.send_data(data, frame):
