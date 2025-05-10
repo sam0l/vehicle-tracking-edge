@@ -34,9 +34,11 @@ class SignDetector:
             'Speed Limit 60', 'Speed Limit 70', 'Speed Limit 80', 'Speed Limit 90', 'Stop'
         ]
 
-        # Initialize ONNX model
+        # Initialize ONNX model with multi-threading
         try:
-            self.ort_session = ort.InferenceSession(yolo_config['model_path'])
+            sess_options = ort.SessionOptions()
+            sess_options.intra_op_num_threads = 4  # Use 4 CPU cores (adjust as needed)
+            self.ort_session = ort.InferenceSession(yolo_config['model_path'], sess_options=sess_options)
             output_shapes = [output.shape for output in self.ort_session.get_outputs()]
             self.logger.info(f"Initialized ONNX model: {yolo_config['model_path']}, output shapes: {output_shapes}")
         except Exception as e:
@@ -151,6 +153,7 @@ class SignDetector:
                     self.logger.warning(f"Invalid class ID: {class_id} (confidence: {confidence:.3f})")
                     continue
                 label = self.class_names[class_id]
+                print(f"Detected: {label} (confidence: {confidence:.3f})")
                 self.logger.info(f"Detected {label} with confidence {confidence:.3f}, box: {box.tolist()}")
                 detection = {
                     "label": label,
