@@ -34,47 +34,23 @@ class SignDetector:
         self.iou_threshold = yolo_cfg.get('iou_threshold', 0.5)
         self.send_images = yolo_cfg.get('send_images', True)
         
-        # Define class names for traffic signs
+        # Define class names from data.yaml
         self.class_names = {
-            0: "stop_sign",
-            1: "speed_limit_30",
-            2: "speed_limit_50",
-            3: "speed_limit_70",
-            4: "speed_limit_80",
-            5: "speed_limit_100",
-            6: "speed_limit_120",
-            7: "no_entry",
-            8: "priority_road",
-            9: "yield",
-            10: "no_parking",
-            11: "no_stopping",
-            12: "no_overtaking",
-            13: "no_overtaking_trucks",
-            14: "danger",
-            15: "bend_left",
-            16: "bend_right",
-            17: "bend",
-            18: "uneven_road",
-            19: "slippery_road",
-            20: "road_narrows",
-            21: "construction",
-            22: "traffic_signal",
-            23: "pedestrian_crossing",
-            24: "school_crossing",
-            25: "bicycle_crossing",
-            26: "snow",
-            27: "animals",
-            28: "restriction_ends",
-            29: "go_right",
-            30: "go_left",
-            31: "go_straight",
-            32: "go_straight_or_right",
-            33: "go_straight_or_left",
-            34: "keep_right",
-            35: "keep_left",
-            36: "roundabout",
-            37: "end_no_overtaking",
-            38: "end_no_overtaking_trucks"
+            0: "Green Light",
+            1: "Red Light",
+            2: "Speed Limit 10",
+            3: "Speed Limit 100",
+            4: "Speed Limit 110",
+            5: "Speed Limit 120",
+            6: "Speed Limit 20",
+            7: "Speed Limit 30",
+            8: "Speed Limit 40",
+            9: "Speed Limit 50",
+            10: "Speed Limit 60",
+            11: "Speed Limit 70",
+            12: "Speed Limit 80",
+            13: "Speed Limit 90",
+            14: "Stop"
         }
         
         self.logger.info(f"Initialized ONNX model with confidence_threshold={self.confidence_threshold}")
