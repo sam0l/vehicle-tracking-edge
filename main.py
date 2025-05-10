@@ -134,11 +134,12 @@ class VehicleTracker:
                                 "longitude": data["gps"]["longitude"] if data.get("gps") and data["gps"].get("longitude") else 0.0,
                                 "speed": data["gps"]["speed"] if data.get("gps") and data["gps"].get("speed") else 0.0,
                                 "timestamp": timestamp,
-                                "sign_type": sign["sign_type"],
+                                "sign_type": sign["label"],
                                 "confidence": sign["confidence"]
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
+                            print(f"[DEBUG] Sending detection payload: {detection_data}")
                             self.logger.debug(f"Sending detection data (size: {len(json.dumps(detection_data))} bytes)")
                             response = requests.post(url, json=detection_data, timeout=30)
                             response.raise_for_status()
