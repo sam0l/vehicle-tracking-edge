@@ -9,79 +9,107 @@ import onnxruntime
 
 logger = logging.getLogger(__name__)
 
+def load_config(config_path="config/config.yaml"):
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    return config
+
 class SignDetector:
     def __init__(self, config_path):
         self.logger = logging.getLogger(__name__)
         config = load_config(config_path)
         yolo_cfg = config.get("yolo", {})
-        
-        # ONNX Runtime session with multi-threading
+        self.imgsz = yolo_cfg.get('imgsz', 640)
+        self.confidence_threshold = yolo_cfg['confidence_threshold']
+        self.iou_threshold = yolo_cfg.get('iou_threshold', 0.5)
+        self.send_images = yolo_cfg.get('send_images', True)
+        self.class_names = [
+            "Green Light", "Red Light", "Speed Limit 10", "Speed Limit 100", "Speed Limit 110",
+            "Speed Limit 120", "Speed Limit 20", "Speed Limit 30", "Speed Limit 40", "Speed Limit 50",
+            "Speed Limit 60", "Speed Limit 70", "Speed Limit 80", "Speed Limit 90", "Stop"
+        ]
         session_options = onnxruntime.SessionOptions()
-        session_options.intra_op_num_threads = 4  # Use 4 threads, adjust as needed
+        session_options.intra_op_num_threads = 4
         session_options.inter_op_num_threads = 1
         self.session = onnxruntime.InferenceSession(
             yolo_cfg['model_path'],
             sess_options=session_options,
             providers=['CPUExecutionProvider']
         )
-        
         self.input_name = self.session.get_inputs()[0].name
         self.input_shape = self.session.get_inputs()[0].shape
-        self.confidence_threshold = yolo_cfg['confidence_threshold']
-        self.iou_threshold = yolo_cfg.get('iou_threshold', 0.5)
-        self.send_images = yolo_cfg.get('send_images', True)
-        
-        # Only two classes: 0 and 1
-        self.class_names = [
-            "Green Light", "Red Light", "Speed Limit 10", "Speed Limit 100", "Speed Limit 110",
-            "Speed Limit 120", "Speed Limit 20", "Speed Limit 30", "Speed Limit 40", "Speed Limit 50",
-            "Speed Limit 60", "Speed Limit 70", "Speed Limit 80", "Speed Limit 90", "Stop"
-        ]
-        
-        self.logger.info(f"Initialized ONNX model with confidence_threshold={self.confidence_threshold}")
-        
+        self.logger.info(f"Initialized ONNX model with imgsz={self.imgsz}, confidence_threshold={self.confidence_threshold}")
         # Performance tracking
         self.frame_times = []
         self.inference_times = []
         self.last_fps_update = time.time()
-        self.fps_update_interval = 1.0  # Update FPS every second
+        self.fps_update_interval = 1.0
 
     def preprocess(self, frame):
-        input_size = (self.input_shape[2], self.input_shape[3])
-        resized = cv2.resize(frame, input_size)
-        blob = cv2.dnn.blobFromImage(
-            resized, 
-            1/255.0, 
-            input_size, 
-            swapRB=True, 
-            crop=False
+        img = cv2.resize(frame, (self.imgsz, self.imgsz))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
+        img = np.expand_dims(img, axis=0)
+        return img
+
+    def postprocess(self, output, iou_threshold=0.5):
+        # output: [1, 19, 8400] -> [1, 8400, 19]
+        if output.ndim == 3:
+            output = output.transpose(0, 2, 1)
+        output = output[0]  # [8400, 19]
+        boxes = output[:, :4]  # [x_center, y_center, w, h]
+        obj_conf = output[:, 4]
+        class_scores = output[:, 5:]
+        class_ids = np.argmax(class_scores, axis=1)
+        class_conf = class_scores[np.arange(class_scores.shape[0]), class_ids]
+        confidences = obj_conf * class_conf
+        # Filter by confidence
+        mask = confidences >= self.confidence_threshold
+        boxes = boxes[mask]
+        confidences = confidences[mask]
+        class_ids = class_ids[mask]
+        if len(boxes) == 0:
+            return [], [], []
+        # Convert xywh to xyxy
+        xyxy_boxes = np.zeros_like(boxes)
+        xyxy_boxes[:, 0] = (boxes[:, 0] - boxes[:, 2] / 2) * self.imgsz
+        xyxy_boxes[:, 1] = (boxes[:, 1] - boxes[:, 3] / 2) * self.imgsz
+        xyxy_boxes[:, 2] = (boxes[:, 0] + boxes[:, 2] / 2) * self.imgsz
+        xyxy_boxes[:, 3] = (boxes[:, 1] + boxes[:, 3] / 2) * self.imgsz
+        # NMS
+        indices = cv2.dnn.NMSBoxes(
+            xyxy_boxes.tolist(), confidences.tolist(), self.confidence_threshold, iou_threshold
         )
-        return blob
+        if isinstance(indices, tuple):
+            indices = indices[0]
+        if isinstance(indices, np.ndarray):
+            indices = indices.flatten()
+        if len(indices) == 0:
+            return [], [], []
+        return xyxy_boxes[indices], confidences[indices], class_ids[indices]
 
     def detect(self, frame):
         start_time = time.time()
-        input_size = (self.input_shape[2], self.input_shape[3])
-        img = cv2.resize(frame, input_size)
-        img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))[None]  # NCHW
+        img = self.preprocess(frame)
         inference_start = time.time()
-        outputs = self.session.run(None, {self.input_name: img})
+        outputs = self.session.run(None, {self.input_name: img})[0]
         inference_time = time.time() - inference_start
+        boxes, confidences, class_ids = self.postprocess(outputs, self.iou_threshold)
         detections = []
-        for det in outputs[0][0]:  # [num_detections, 6]
-            x1, y1, x2, y2, conf, class_id = det
-            class_id = int(class_id)
-            if conf > self.confidence_threshold and 0 <= class_id < len(self.class_names):
-                detections.append({
-                    "sign_type": self.class_names[class_id],
-                    "confidence": float(conf),
-                    "class_id": class_id,
-                    "class_name": self.class_names[class_id],
-                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                    "timestamp": datetime.now().isoformat()
-                })
-            elif conf > self.confidence_threshold:
-                logger.warning(f"Ignoring detection with invalid class ID: {class_id}")
+        for box, confidence, class_id in zip(boxes, confidences, class_ids):
+            if class_id < 0 or class_id >= len(self.class_names):
+                self.logger.warning(f"Invalid class ID: {class_id} (confidence: {confidence:.3f})")
+                continue
+            label = self.class_names[class_id]
+            self.logger.info(f"Detected {label} with confidence {confidence:.3f}")
+            detections.append({
+                "sign_type": label,
+                "confidence": float(confidence),
+                "class_id": int(class_id),
+                "class_name": label,
+                "bbox": [int(b) for b in box],
+                "timestamp": datetime.now().isoformat()
+            })
         self.update_performance_metrics(time.time() - start_time, inference_time)
         return detections
 
@@ -103,11 +131,6 @@ class SignDetector:
     def close(self):
         if hasattr(self, 'session'):
             del self.session
-
-def load_config(config_path="config/config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    return config
 
 if __name__ == "__main__":
     # Setup logging to integrate with your codebase's logging config
