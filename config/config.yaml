@@ -28,7 +28,8 @@ backend:
   detection_endpoint: "/detections"
   sim_data_endpoint: "/sim-data"
 logging:
-  level: "DEBUG"
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "vehicle_tracker.log"
   offline_file: "offline_data.json"
   interval:
@@ -36,3 +37,6 @@ logging:
     imu: 0.1
     camera: 0.2
     sim: 300.0
+
+api:
+  port: 5000
