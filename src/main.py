@@ -51,7 +51,13 @@ class VehicleTracker:
         )
         
         try:
-            self.sign_detector = SignDetector(config_path=config_path)
+            yolo_cfg = self.config['yolo']
+            self.sign_detector = SignDetector(
+                onnx_model_path=yolo_cfg['model_path'],
+                imgsz=yolo_cfg['imgsz'],
+                confidence_threshold=yolo_cfg['confidence_threshold'],
+                send_images=yolo_cfg.get('send_images', True)
+            )
         except Exception as e:
             self.logger.error(f"Failed to initialize SignDetector: {e}")
             self.logger.info("Continuing without sign detection")
@@ -166,7 +172,8 @@ class VehicleTracker:
                                 "longitude": data["gps"]["longitude"] if data.get("gps") and data["gps"].get("longitude") else 0.0,
                                 "speed": data["gps"]["speed"] if data.get("gps") and data["gps"].get("speed") else 0.0,
                                 "timestamp": timestamp,
-                                "sign_type": sign["sign_type"]
+                                "sign_type": sign["label"],
+                                "confidence": sign["confidence"]
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
