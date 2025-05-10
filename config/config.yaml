@@ -1,21 +1,21 @@
 camera:
   device_id: 0
-  width: 640
-  height: 480
+  width: 1280
+  height: 720
   fps: 30
 yolo:
-  model_path: "models/yolov5s.onnx"
+  model_path: "models/yolov8s.onnx"
   confidence_threshold: 0.5
   iou_threshold: 0.45
   send_images: true
 gps:
-  port: "/dev/ttyUSB0"
+  port: "/dev/ttyUSB1"
   baudrate: 9600
   timeout: 1
   power_delay: 2
   agps_delay: 5
 imu:
-  i2c_bus: 1
+  i2c_bus: 4
   sample_rate: 100
   accel_range: 2
   gyro_range: 250
