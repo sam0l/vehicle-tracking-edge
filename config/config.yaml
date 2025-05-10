@@ -6,9 +6,9 @@ camera:
 yolo:
   onnx_model_path: "models/yolov8n.onnx"
   imgsz: 640
-  confidence_threshold: 0.5
+  confidence_threshold: 0.7
   iou_threshold: 0.7
-  send_images: false
+  send_images: true
 gps:
   port: "/dev/ttyUSB1"
   baudrate: 115200

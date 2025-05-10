@@ -50,7 +50,7 @@ class SignDetector:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
 
                     detection = {
-                        "sign_type": class_name,
+                        "sign_type": f"{class_name}, {confidence*100:.0f}% certain ({confidence:.2f} confidence)",
                         "timestamp": np.datetime64('now').astype(str)
                     }
 
