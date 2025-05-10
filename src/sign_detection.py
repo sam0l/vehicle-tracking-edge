@@ -73,7 +73,7 @@ class SignDetector:
         for detection in outputs[0]:
             confidence = float(detection[4])
             class_id = int(detection[5])
-            if confidence > self.confidence_threshold and 0 <= class_id <= 1:
+            if confidence > self.confidence_threshold and 0 <= class_id <= 14:
                 x1, y1, x2, y2 = detection[:4]
                 x1 = int(x1 * width)
                 y1 = int(y1 * height)
