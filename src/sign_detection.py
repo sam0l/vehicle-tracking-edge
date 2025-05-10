@@ -102,13 +102,15 @@ class SignDetector:
                 x2 = int(x2 * width)
                 y2 = int(y2 * height)
                 
-                # Get class ID
+                # Get class ID and name
                 class_id = int(detection[5])
+                class_name = self.model.names[class_id]
                 
                 detections.append({
-                    "sign_type": class_id,
+                    "sign_type": f"{class_name}, {confidence*100:.0f}% certain ({confidence:.2f} confidence)",
                     "confidence": float(confidence),
-                    "bbox": [x1, y1, x2, y2]
+                    "bbox": [x1, y1, x2, y2],
+                    "timestamp": datetime.now().isoformat()
                 })
         
         return detections
