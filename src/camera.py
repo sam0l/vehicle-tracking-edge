@@ -61,15 +61,19 @@ class Camera:
 
     def get_frame(self):
         if not self.cap or not self.cap.isOpened():
+            print(f"[DEBUG] Camera {self.device_id} not initialized or closed")
             self.logger.warning(f"Camera {self.device_id} not initialized or closed")
             return None
         try:
             ret, frame = self.cap.read()
             if not ret:
+                print(f"[DEBUG] Failed to capture frame from {self.device_id}")
                 self.logger.warning(f"Failed to capture frame from {self.device_id}")
                 return None
+            print(f"[DEBUG] Frame captured from {self.device_id}: {frame.shape}")
             return frame
         except Exception as e:
+            print(f"[DEBUG] Error capturing frame from {self.device_id}: {e}")
             self.logger.error(f"Error capturing frame from {self.device_id}: {e}")
             return None
 

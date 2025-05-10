@@ -128,12 +128,14 @@ class SignDetector:
 
     def detect(self, frame):
         try:
+            print("[DEBUG] Starting detection...")
             start_time = time.time()
             preprocess_start = time.time()
             img = self.preprocess(frame)
             preprocess_time = time.time() - preprocess_start
             inference_start = time.time()
             outputs = self.ort_session.run(None, {'images': img})[0]
+            print(f"[DEBUG] Model output shape: {outputs.shape}")
             inference_time = time.time() - inference_start
             postprocess_start = time.time()
             boxes, confidences, class_ids = self.postprocess(outputs)
@@ -163,8 +165,10 @@ class SignDetector:
                 if self.send_images:
                     detection["image"] = None
                 detections.append(detection)
+            print(f"[DEBUG] Number of detections: {len(detections)}")
             return detections
         except Exception as e:
+            print(f"[DEBUG] Error during detection: {e}")
             self.logger.error(f"Error during detection: {e}")
             return []
 

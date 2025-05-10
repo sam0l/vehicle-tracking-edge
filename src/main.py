@@ -171,6 +171,7 @@ class VehicleTracker:
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
+                            print(f"[DEBUG] Sending detection payload: {detection_data}")
                             self.logger.debug(f"Sending detection data (size: {len(json.dumps(detection_data))} bytes)")
                             response = requests.post(url, json=detection_data, timeout=30)
                             response.raise_for_status()
@@ -256,11 +257,15 @@ class VehicleTracker:
                 if self.camera_initialized and current_time - last_camera >= self.config['logging']['interval']['camera']:
                     frame = self.camera.get_frame()
                     if frame is not None:
+                        print(f"[DEBUG] Frame captured: {frame.shape}")
                         if self.sign_detector:
                             signs = self.sign_detector.detect(frame)
+                            print(f"[DEBUG] Detections: {signs}")
                             if signs:
                                 data.update({"signs": signs})
                         last_camera = current_time
+                    else:
+                        print("[DEBUG] No frame captured from camera!")
                 elif not self.camera_initialized and current_time - last_camera_init >= camera_init_interval:
                     self.camera_initialized = self.camera.initialize()
                     last_camera_init = current_time
