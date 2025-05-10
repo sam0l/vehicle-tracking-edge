@@ -15,112 +15,158 @@ def load_config(config_path="config/config.yaml"):
     return config
 
 class SignDetector:
-    def __init__(self, onnx_model_path, imgsz, confidence_threshold, send_images):
+    def __init__(self, config_path='config/config.yaml'):
         self.logger = logging.getLogger(__name__)
-        self.imgsz = imgsz
-        self.confidence_threshold = confidence_threshold
-        self.send_images = send_images
+
+        # Load config
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        yolo_config = config['yolo']
+        self.imgsz = yolo_config['imgsz']
+        self.confidence_threshold = yolo_config['confidence_threshold']
+        self.iou_threshold = yolo_config['iou_threshold']
+        self.send_images = yolo_config['send_images']
+
         self.class_names = [
             'Green Light', 'Red Light', 'Speed Limit 10', 'Speed Limit 100', 'Speed Limit 110',
             'Speed Limit 120', 'Speed Limit 20', 'Speed Limit 30', 'Speed Limit 40', 'Speed Limit 50',
             'Speed Limit 60', 'Speed Limit 70', 'Speed Limit 80', 'Speed Limit 90', 'Stop'
         ]
-        self.ort_session = None
+
+        # Initialize ONNX model
         try:
-            self.ort_session = ort.InferenceSession(onnx_model_path)
-            self.logger.info(f"Initialized ONNX model: {onnx_model_path}")
+            self.ort_session = ort.InferenceSession(yolo_config['model_path'])
+            output_shapes = [output.shape for output in self.ort_session.get_outputs()]
+            self.logger.info(f"Initialized ONNX model: {yolo_config['model_path']}, output shapes: {output_shapes}")
         except Exception as e:
             self.logger.error(f"Failed to load ONNX model: {e}")
             raise
-        self.logger.info(f"SignDetector initialized with onnx model, imgsz={imgsz}, confidence_threshold={confidence_threshold}")
-        # Performance tracking
-        self.frame_times = []
-        self.inference_times = []
-        self.last_fps_update = time.time()
-        self.fps_update_interval = 1.0
+
+        self.logger.info(f"SignDetector initialized with ONNX model, imgsz={self.imgsz}, confidence_threshold={self.confidence_threshold}, iou_threshold={self.iou_threshold}")
 
     def preprocess(self, frame):
         img = cv2.resize(frame, (self.imgsz, self.imgsz))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
+        img = img.astype(np.float32) / 255.0
+        img = img.transpose(2, 0, 1)
         img = np.expand_dims(img, axis=0)
         return img
 
-    def postprocess(self, outputs, iou_threshold=0.5):
-        boxes = outputs[:, :4]  # [x_center, y_center, width, height]
-        scores = outputs[:, 4:]  # [num_boxes, num_classes]
+    def postprocess(self, outputs):
+        if len(outputs.shape) != 3 or outputs.shape[0] != 1:
+            self.logger.error(f"Unexpected output shape: {outputs.shape}, expected [1, ?, ?]")
+            return [], [], []
+
+        outputs = outputs[0]
+        num_classes = len(self.class_names)
+        expected_channels = num_classes + 4
+
+        if outputs.shape[0] == expected_channels:
+            outputs = outputs.transpose(1, 0)
+        else:
+            self.logger.error(f"Unexpected channel count: {outputs.shape[0]}, expected {expected_channels}")
+            return [], [], []
+
+        boxes = outputs[:, :4]
+        scores = outputs[:, 4:]
+
+        self.logger.debug(f"Raw scores min/max/mean: {scores.min():.4f}/{scores.max():.4f}/{scores.mean():.4f}")
+        scores = 1 / (1 + np.exp(-scores))
+        self.logger.debug(f"Sigmoid scores min/max/mean: {scores.min():.4f}/{scores.max():.4f}/{scores.mean():.4f}")
+
         confidences = np.max(scores, axis=1)
         class_ids = np.argmax(scores, axis=1)
-        # Filter by confidence
+
+        self.logger.debug(f"Detections before confidence filter: {len(confidences)}")
         mask = confidences >= self.confidence_threshold
+        if not np.any(mask):
+            self.logger.debug("No detections above confidence threshold")
+            return [], [], []
+
         boxes = boxes[mask]
         confidences = confidences[mask]
         class_ids = class_ids[mask]
-        if len(boxes) == 0:
-            return [], [], []
-        # Non-maximum suppression
+
+        self.logger.debug(f"Detections after confidence filter: {len(boxes)}")
+
+        boxes[:, [0, 2]] *= self.imgsz
+        boxes[:, [1, 3]] *= self.imgsz
+
+        boxes_xyxy = np.zeros_like(boxes)
+        boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2
+        boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2
+        boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
+        boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
+
         indices = cv2.dnn.NMSBoxes(
-            boxes.tolist(),
+            boxes_xyxy.tolist(),
             confidences.tolist(),
             self.confidence_threshold,
-            iou_threshold
+            self.iou_threshold
         )
-        self.logger.debug(f"NMS indices: {indices}")
-        # Handle varying OpenCV outputs
+
         indices = indices.flatten() if isinstance(indices, np.ndarray) and indices.ndim > 1 else indices
         if isinstance(indices, tuple):
-            indices = indices[0]  # Some OpenCV versions return a tuple
+            indices = indices[0]
+
+        self.logger.debug(f"Detections after NMS: {len(indices)}")
+
         if len(indices) == 0:
+            self.logger.debug("No detections after NMS")
             return [], [], []
-        return boxes[indices], confidences[indices], class_ids[indices]
+
+        boxes = boxes[indices]
+        boxes[:, [0, 2]] /= self.imgsz
+        boxes[:, [1, 3]] /= self.imgsz
+        confidences = confidences[indices]
+        class_ids = class_ids[indices]
+
+        return boxes, confidences, class_ids
 
     def detect(self, frame):
         try:
             start_time = time.time()
+            preprocess_start = time.time()
             img = self.preprocess(frame)
+            preprocess_time = time.time() - preprocess_start
             inference_start = time.time()
-            detections = []
             outputs = self.ort_session.run(None, {'images': img})[0]
-            outputs = outputs.transpose(0, 2, 1)  # [1, 19, n] -> [1, n, 19]
-            self.logger.debug(f"Model output shape: {outputs.shape}, unique class IDs: {np.unique(outputs[0, :, 4:].argmax(axis=1)).tolist()}")
-            boxes, confidences, class_ids = self.postprocess(outputs[0])
+            inference_time = time.time() - inference_start
+            postprocess_start = time.time()
+            boxes, confidences, class_ids = self.postprocess(outputs)
+            postprocess_time = time.time() - postprocess_start
+            total_time = time.time() - start_time
+            fps = 1.0 / total_time if total_time > 0 else 0.0
+            self.logger.info(
+                f"Detection completed: FPS={fps:.2f}, "
+                f"Total={total_time*1000:.2f}ms "
+                f"(Preprocess={preprocess_time*1000:.2f}ms, "
+                f"Inference={inference_time*1000:.2f}ms, "
+                f"Postprocess={postprocess_time*1000:.2f}ms)"
+            )
+            detections = []
             for box, confidence, class_id in zip(boxes, confidences, class_ids):
                 if class_id < 0 or class_id >= len(self.class_names):
                     self.logger.warning(f"Invalid class ID: {class_id} (confidence: {confidence:.3f})")
                     continue
                 label = self.class_names[class_id]
-                self.logger.info(f"Detected {label} with confidence {confidence:.3f}")
-                print(f"Detected: {label} (confidence: {confidence:.3f})")
-                detections.append({
+                self.logger.info(f"Detected {label} with confidence {confidence:.3f}, box: {box.tolist()}")
+                detection = {
                     "label": label,
                     "confidence": float(confidence),
-                    "box": box.tolist()  # [x_center, y_center, width, height]
-                })
-            inference_time = time.time() - inference_start
-            self.update_performance_metrics(time.time() - start_time, inference_time)
+                    "box": box.tolist()
+                }
+                if self.send_images:
+                    detection["image"] = None
+                detections.append(detection)
             return detections
         except Exception as e:
             self.logger.error(f"Error during detection: {e}")
             return []
 
-    def update_performance_metrics(self, total_time, inference_time):
-        current_time = time.time()
-        self.frame_times.append(total_time)
-        self.inference_times.append(inference_time)
-        if len(self.frame_times) > 30:
-            self.frame_times.pop(0)
-            self.inference_times.pop(0)
-        if current_time - self.last_fps_update >= self.fps_update_interval:
-            avg_fps = 1.0 / (sum(self.frame_times) / len(self.frame_times))
-            avg_inference = sum(self.inference_times) / len(self.inference_times) * 1000
-            logger.info(f"Performance - FPS: {avg_fps:.1f}, Inference: {avg_inference:.1f}ms")
-            self.frame_times = []
-            self.inference_times = []
-            self.last_fps_update = current_time
-
     def close(self):
-        if hasattr(self, 'ort_session'):
-            del self.ort_session
+        self.logger.info("SignDetector closed")
 
 if __name__ == "__main__":
     # Setup logging to integrate with your codebase's logging config
@@ -134,10 +180,7 @@ if __name__ == "__main__":
         # Instantiate SignDetector using config values exactly as you specified
         yolo_cfg = config.get("yolo", {})
         detector = SignDetector(
-            onnx_model_path="models/yolov8n.onnx",
-            imgsz=640,
-            confidence_threshold=0.7,
-            send_images=True
+            config_path='config/config.yaml'
         )
         logger.info("SignDetector initialized successfully.")
     except Exception as e:
