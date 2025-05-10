@@ -32,10 +32,11 @@ class SignDetector:
         self.send_images = yolo_cfg.get('send_images', True)
         
         # Only two classes: 0 and 1
-        self.class_names = {
-            0: "Green Light",
-            1: "Red Light"
-        }
+        self.class_names = [
+            "Green Light", "Red Light", "Speed Limit 10", "Speed Limit 100", "Speed Limit 110",
+            "Speed Limit 120", "Speed Limit 20", "Speed Limit 30", "Speed Limit 40", "Speed Limit 50",
+            "Speed Limit 60", "Speed Limit 70", "Speed Limit 80", "Speed Limit 90", "Stop"
+        ]
         
         self.logger.info(f"Initialized ONNX model with confidence_threshold={self.confidence_threshold}")
         
@@ -59,38 +60,29 @@ class SignDetector:
 
     def detect(self, frame):
         start_time = time.time()
-        blob = self.preprocess(frame)
+        input_size = (self.input_shape[2], self.input_shape[3])
+        img = cv2.resize(frame, input_size)
+        img = img.astype(np.float32) / 255.0
+        img = np.transpose(img, (2, 0, 1))[None]  # NCHW
         inference_start = time.time()
-        outputs = self.session.run(None, {self.input_name: blob})
+        outputs = self.session.run(None, {self.input_name: img})
         inference_time = time.time() - inference_start
-        detections = self.process_outputs(outputs[0], frame.shape)
-        self.update_performance_metrics(time.time() - start_time, inference_time)
-        return detections
-
-    def process_outputs(self, outputs, frame_shape):
         detections = []
-        height, width = frame_shape[:2]
-        for detection in outputs[0]:
-            confidence = float(detection[4])
-            class_id = int(detection[5])
-            if confidence > self.confidence_threshold and 0 <= class_id < len(self.class_names):
-                x1, y1, x2, y2 = detection[:4]
-                x1 = int(x1 * width)
-                y1 = int(y1 * height)
-                x2 = int(x2 * width)
-                y2 = int(y2 * height)
-                class_name = self.class_names[class_id]
-                self.logger.info(f"Detected {class_name} (ID: {class_id}) with confidence {confidence:.2f}")
+        for det in outputs[0][0]:  # [num_detections, 6]
+            x1, y1, x2, y2, conf, class_id = det
+            class_id = int(class_id)
+            if conf > self.confidence_threshold and 0 <= class_id < len(self.class_names):
                 detections.append({
-                    "sign_type": f"{class_name}, {confidence*100:.1f}% certain",
-                    "confidence": confidence,
+                    "sign_type": self.class_names[class_id],
+                    "confidence": float(conf),
                     "class_id": class_id,
-                    "class_name": class_name,
-                    "bbox": [x1, y1, x2, y2],
+                    "class_name": self.class_names[class_id],
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
                     "timestamp": datetime.now().isoformat()
                 })
-            elif confidence > self.confidence_threshold:
-                self.logger.warning(f"Ignoring detection with invalid class ID: {class_id}")
+            elif conf > self.confidence_threshold:
+                logger.warning(f"Ignoring detection with invalid class ID: {class_id}")
+        self.update_performance_metrics(time.time() - start_time, inference_time)
         return detections
 
     def update_performance_metrics(self, total_time, inference_time):
