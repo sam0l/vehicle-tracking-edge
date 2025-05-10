@@ -101,6 +101,7 @@ class SignDetector:
                 self.logger.warning(f"Invalid class ID: {class_id} (confidence: {confidence:.3f})")
                 continue
             label = self.class_names[class_id]
+            print(f"Detected: {label} (confidence: {confidence:.3f})")  # Console log
             self.logger.info(f"Detected {label} with confidence {confidence:.3f}")
             detections.append({
                 "sign_type": label,

@@ -134,7 +134,8 @@ class VehicleTracker:
                                 "longitude": data["gps"]["longitude"] if data.get("gps") and data["gps"].get("longitude") else 0.0,
                                 "speed": data["gps"]["speed"] if data.get("gps") and data["gps"].get("speed") else 0.0,
                                 "timestamp": timestamp,
-                                "sign_type": sign["sign_type"]
+                                "sign_type": sign["sign_type"],
+                                "confidence": sign["confidence"]
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
