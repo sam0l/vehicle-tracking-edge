@@ -5,7 +5,6 @@ import numpy as np
 import yaml
 import time
 from datetime import datetime
-from ultralytics import YOLO
 import onnxruntime
 
 logger = logging.getLogger(__name__)
@@ -22,12 +21,6 @@ class SignDetector:
         config = load_config(config_path)
         yolo_cfg = config.get("yolo", {})
         
-        self.model = YOLO(yolo_cfg['model_path'])
-        self.imgsz = yolo_cfg['imgsz']
-        self.confidence_threshold = yolo_cfg['confidence_threshold']
-        self.send_images = yolo_cfg.get('send_images', True)
-        self.logger.info(f"Initialized YOLO model with imgsz={self.imgsz}, confidence_threshold={self.confidence_threshold}")
-
         # Initialize ONNX Runtime session
         self.session = onnxruntime.InferenceSession(
             yolo_cfg['model_path'],
@@ -37,7 +30,54 @@ class SignDetector:
         # Get model metadata
         self.input_name = self.session.get_inputs()[0].name
         self.input_shape = self.session.get_inputs()[0].shape
+        self.confidence_threshold = yolo_cfg['confidence_threshold']
         self.iou_threshold = yolo_cfg.get('iou_threshold', 0.5)
+        self.send_images = yolo_cfg.get('send_images', True)
+        
+        # Define class names for traffic signs
+        self.class_names = {
+            0: "stop_sign",
+            1: "speed_limit_30",
+            2: "speed_limit_50",
+            3: "speed_limit_70",
+            4: "speed_limit_80",
+            5: "speed_limit_100",
+            6: "speed_limit_120",
+            7: "no_entry",
+            8: "priority_road",
+            9: "yield",
+            10: "no_parking",
+            11: "no_stopping",
+            12: "no_overtaking",
+            13: "no_overtaking_trucks",
+            14: "danger",
+            15: "bend_left",
+            16: "bend_right",
+            17: "bend",
+            18: "uneven_road",
+            19: "slippery_road",
+            20: "road_narrows",
+            21: "construction",
+            22: "traffic_signal",
+            23: "pedestrian_crossing",
+            24: "school_crossing",
+            25: "bicycle_crossing",
+            26: "snow",
+            27: "animals",
+            28: "restriction_ends",
+            29: "go_right",
+            30: "go_left",
+            31: "go_straight",
+            32: "go_straight_or_right",
+            33: "go_straight_or_left",
+            34: "keep_right",
+            35: "keep_left",
+            36: "roundabout",
+            37: "end_no_overtaking",
+            38: "end_no_overtaking_trucks"
+        }
+        
+        self.logger.info(f"Initialized ONNX model with confidence_threshold={self.confidence_threshold}")
         
         # Performance tracking
         self.frame_times = []
@@ -104,7 +144,7 @@ class SignDetector:
                 
                 # Get class ID and name
                 class_id = int(detection[5])
-                class_name = self.model.names[class_id]
+                class_name = self.class_names.get(class_id, f"unknown_{class_id}")
                 
                 detections.append({
                     "sign_type": f"{class_name}, {confidence*100:.0f}% certain ({confidence:.2f} confidence)",
