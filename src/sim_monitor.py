@@ -143,7 +143,7 @@ class SimMonitor:
 def send_to_backend(balance_info, data_usage, network_info, signal_strength):
     """Send SIM data to backend."""
     try:
-        url = "http://localhost:8000/api/sim-data"  # Update with your backend URL
+        url = "https://vehicle-tracking-backend-bwmz.onrender.com/api/sim-data"  # Use the correct backend URL
         data = {
             "balance": balance_info,
             "data_usage": data_usage,
@@ -151,17 +151,22 @@ def send_to_backend(balance_info, data_usage, network_info, signal_strength):
             "signal_strength": signal_strength,
             "timestamp": datetime.now().isoformat()
         }
-        logger.info(f"Sending SIM data to backend: {data}")
+        logger.info(f"Sending SIM data to backend at {url}")
+        logger.info(f"Data being sent: {data}")
         response = requests.post(url, json=data)
         response.raise_for_status()
-        logger.info("SIM data sent to backend successfully")
+        logger.info(f"SIM data sent successfully. Response: {response.status_code}")
         return True
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error sending SIM data to backend: {e}")
+        return False
     except Exception as e:
         logger.error(f"Error sending SIM data to backend: {e}")
         return False
 
 def sim_monitor_thread():
     """Thread to monitor SIM data."""
+    logger.info("Starting SIM monitor thread...")
     monitor = SimMonitor()
     if not monitor.initialize():
         logger.error("Failed to initialize SIM monitor")
@@ -170,6 +175,28 @@ def sim_monitor_thread():
     try:
         while True:
             logger.info("Starting SIM data collection cycle...")
+            
+            # Check SIM status first
+            logger.info("Checking SIM status...")
+            sim_status = monitor.send_at_command("AT+CPIN?")
+            logger.info(f"SIM status: {sim_status}")
+            
+            # Get network registration status
+            logger.info("Checking network registration...")
+            reg_status = monitor.send_at_command("AT+CREG?")
+            logger.info(f"Network registration status: {reg_status}")
+            
+            # Get operator info
+            logger.info("Getting operator info...")
+            operator = monitor.send_at_command("AT+COPS?")
+            logger.info(f"Operator info: {operator}")
+            
+            # Get signal strength
+            logger.info("Getting signal strength...")
+            signal = monitor.send_at_command("AT+CSQ")
+            logger.info(f"Signal strength: {signal}")
+            
+            # Collect all data
             balance_info = monitor.check_sim_balance()
             data_usage = monitor.get_data_usage()
             network_info = monitor.get_network_info()
