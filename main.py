@@ -56,7 +56,12 @@ class VehicleTracker:
             with open(self.offline_file, 'w') as f:
                 json.dump([], f)
         self.camera_initialized = False
-        self.sim_monitor = SimMonitor()
+        self.sim_monitor = SimMonitor(
+            port=self.config['sim']['port'],
+            baudrate=self.config['sim']['baudrate'],
+            check_interval=self.config['sim'].get('check_interval', 3600),
+            usage_file=self.config['sim'].get('usage_file', 'data_usage.json')
+        )
 
     def setup_logging(self):
         logging.basicConfig(
@@ -195,9 +200,17 @@ class VehicleTracker:
             self.logger.error("Initialization failed, exiting")
             return
 
-        last_gps = last_imu = last_camera = last_camera_init = last_sim = 0
+        # Start Flask in a separate thread
+        import threading
+        flask_thread = threading.Thread(target=app.run, kwargs={
+            'host': '0.0.0.0',
+            'port': self.config['api']['port']
+        })
+        flask_thread.daemon = True
+        flask_thread.start()
+
+        last_gps = last_imu = last_camera = last_camera_init = 0
         camera_init_interval = 30  # Retry camera every 30 seconds if failed
-        sim_send_interval = 3600  # Send SIM data every hour
         try:
             while True:
                 current_time = time.time()
@@ -219,54 +232,41 @@ class VehicleTracker:
                         data.update({"imu": imu_data})
                     last_imu = current_time
 
-                # Camera and sign detection
-                frame = None
-                if not self.camera_initialized and current_time - last_camera_init >= camera_init_interval:
-                    self.logger.info(f"Attempting to reinitialize camera at {self.config['camera']['device_id']}")
+                # Camera data
+                if self.camera_initialized and current_time - last_camera >= self.config['logging']['interval']['camera']:
+                    frame = self.camera.get_frame()
+                    if frame is not None:
+                        print(f"[DEBUG] Frame captured: {frame.shape}")
+                        if self.sign_detector:
+                            signs = self.sign_detector.detect(frame)
+                            print(f"[DEBUG] Detections: {signs}")
+                            if signs:
+                                data.update({"signs": signs})
+                        last_camera = current_time
+                    else:
+                        print("[DEBUG] No frame captured from camera!")
+                elif not self.camera_initialized and current_time - last_camera_init >= camera_init_interval:
                     self.camera_initialized = self.camera.initialize()
                     last_camera_init = current_time
 
-                if self.camera_initialized and self.sign_detector and current_time - last_camera >= self.config['logging']['interval']['camera']:
-                    frame = self.camera.get_frame()
-                    if frame is not None:
-                        signs = self.sign_detector.detect(frame)
-                        if signs:
-                            data.update({"signs": signs})
-                    else:
-                        self.logger.warning("Failed to capture camera frame")
-                    last_camera = current_time
+                # Data usage logging is handled in send_data via self.sim_monitor.update_data_consumption
 
-                # SIM data: send every sim_send_interval seconds
-                if current_time - last_sim >= sim_send_interval:
-                    sim_data = {}
-                    network_info = self.sim_monitor.get_network_info()
-                    signal_strength = self.sim_monitor.get_signal_strength()
-                    if any([balance_info, data_usage, network_info, signal_strength]):
-                        sim_data = {
-                            "balance": balance_info,
-                            "data_usage": data_usage,
-                            "network_info": network_info,
-                            "signal_strength": signal_strength,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        self.send_sim_data(sim_data)
-                    last_sim = current_time
-
-                if data.get("gps") or data.get("imu") or data.get("signs"):
-                    if not self.send_data(data, frame):
+                # Send data if we have GPS coordinates
+                if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
+                    if not self.send_data(data, frame if 'frame' in locals() else None):
                         self.log_offline(data)
-                    self.send_offline_data()
+                else:
+                    self.logger.debug("No valid GPS data to send")
 
-                time.sleep(0.1)
+                # Try to send any offline data
+                self.send_offline_data()
+
+                time.sleep(0.1)  # Small delay to prevent CPU overload
 
         except KeyboardInterrupt:
-            self.logger.info("Shutting down")
+            self.logger.info("Shutting down...")
         finally:
-            self.gps.close()
-            self.imu.close()
-            self.camera.close()
-            if self.sign_detector:
-                self.sign_detector.close()
+            self.cleanup()
 
 def sim_monitor_thread():
     monitor = SimMonitor()
