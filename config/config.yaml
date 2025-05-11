@@ -5,7 +5,7 @@ camera:
   fps: 30
 yolo:
   model_path: "models/yolov8n.onnx"
-  confidence_threshold: 0.7
+  confidence_threshold: 0.8
   imgsz: 640
   iou_threshold: 0.5
   send_images: true

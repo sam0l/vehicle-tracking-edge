@@ -96,14 +96,17 @@ def generate_video_stream():
         # Run detection
         detections = detector.detect(frame)
         logger.info(f'Detections this frame: {len(detections)}')
+        h, w = frame.shape[:2]
         if len(detections) > 0:
             boxes = []
             for d in detections:
-                # Unletterbox
-                x1 = (d['box'][0] - dw) / r
-                y1 = (d['box'][1] - dh) / r
-                x2 = (d['box'][2] - dw) / r
-                y2 = (d['box'][3] - dh) / r
+                # Unletterbox (corrected for 640x360 letterboxed to 640x640)
+                x1 = max(0, min(w, d['box'][0] / r))
+                y1 = max(0, min(h, (d['box'][1] - dh) / r))
+                x2 = max(0, min(w, d['box'][2] / r))
+                y2 = max(0, min(h, (d['box'][3] - dh) / r))
+                logger.info(f"Original detection box: {d['box']}")
+                logger.info(f"Transformed box: {[x1, y1, x2, y2]}")
                 boxes.append([x1, y1, x2, y2])
             class_ids = [detector.class_names.index(d['label']) for d in detections]
             confidences = [d['confidence'] for d in detections]
