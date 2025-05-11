@@ -31,7 +31,10 @@ class VehicleTracker:
         )
         self.imu = IMU(
             self.config['imu']['i2c_bus'],
-            i2c_address=["0x68", "0x69"]  # Try both addresses due to floating AD0 pin
+            i2c_addresses=self.config['imu']['i2c_addresses'],
+            sample_rate=self.config['imu']['sample_rate'],
+            accel_range=self.config['imu']['accel_range'],
+            gyro_range=self.config['imu']['gyro_range']
         )
         self.camera = Camera(
             self.config['camera']['device_id'],
