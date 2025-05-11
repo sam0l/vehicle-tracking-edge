@@ -82,45 +82,28 @@ def generate_video_stream():
             time.sleep(0.1)
             continue
 
-        # Letterbox params
-        imgsz = detector.imgsz
-        if isinstance(imgsz, int):
-            imgsz = (imgsz, imgsz)
-        h, w = frame.shape[:2]
-        r = min(imgsz[0] / h, imgsz[1] / w)
-        new_unpad = (int(round(w * r)), int(round(h * r)))
-        dw, dh = imgsz[1] - new_unpad[0], imgsz[0] - new_unpad[1]
-        dw /= 2
-        dh /= 2
+        # Preprocess for detection (letterbox)
+        img, r, (dw, dh) = detector.preprocess(frame)
+        # Convert back to HWC uint8 for drawing
+        img_for_model = img[0].transpose(1, 2, 0)
+        img_for_model = (img_for_model * 255).astype(np.uint8)
+        img_for_model = cv2.cvtColor(img_for_model, cv2.COLOR_RGB2BGR)
 
+        # Run detection (on the original frame, which will be letterboxed inside detect)
         detections = detector.detect(frame)
-        boxes = []
-        class_ids = []
-        confidences = []
-        for d in detections:
-            # Unletterbox
-            x1 = (d['box'][0] - dw) / r
-            y1 = (d['box'][1] - dh) / r
-            x2 = (d['box'][2] - dw) / r
-            y2 = (d['box'][3] - dh) / r
-            # Clip
-            x1 = int(np.clip(x1, 0, w-1))
-            y1 = int(np.clip(y1, 0, h-1))
-            x2 = int(np.clip(x2, 0, w-1))
-            y2 = int(np.clip(y2, 0, h-1))
-            boxes.append([x1, y1, x2, y2])
-            class_ids.append(detector.class_names.index(d['label']))
-            confidences.append(d['confidence'])
+        boxes = [d['box'] for d in detections]
+        class_ids = [detector.class_names.index(d['label']) for d in detections]
+        confidences = [d['confidence'] for d in detections]
         if boxes:
-            frame = draw_boxes_on_image(
-                frame,
+            img_for_model = draw_boxes_on_image(
+                img_for_model,
                 np.array(boxes),
                 np.array(class_ids),
                 np.array(confidences),
                 detector.class_names
             )
 
-        ret, jpeg = cv2.imencode('.jpg', frame)
+        ret, jpeg = cv2.imencode('.jpg', img_for_model)
         if not ret:
             logger.error("Failed to encode frame as JPEG for video stream")
             continue
