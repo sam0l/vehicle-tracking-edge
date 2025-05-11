@@ -5,6 +5,7 @@ import socket
 import yaml
 import csv
 from datetime import datetime
+import threading
 
 # Ensure src is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -41,8 +42,24 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
     except socket.error:
         return False
 
+# Early exit flag
+early_exit = threading.Event()
+
+def input_listener():
+    while True:
+        user_input = input()
+        if user_input.strip().lower() == 'x':
+            print("[INFO] Early termination requested. Finishing test...")
+            early_exit.set()
+            break
+
 def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
     print(f"[INFO] Starting stress test for {duration_seconds} seconds ({duration_seconds/3600:.2f} hours)")
+    print("[INFO] Press 'x' and Enter at any time to end the test early.")
+    # Start input listener thread
+    listener_thread = threading.Thread(target=input_listener, daemon=True)
+    listener_thread.start()
+
     # Initialize subsystems
     detector = SignDetector(config_path=os.path.join(os.path.dirname(__file__), '../config/config.yaml'))
     camera = Camera(
@@ -77,7 +94,7 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
         writer = csv.writer(f)
         writer.writerow(["timestamp"] + subsystems)
         start_time = time.time()
-        while (time.time() - start_time) < duration_seconds:
+        while (time.time() - start_time) < duration_seconds and not early_exit.is_set():
             timestamp = datetime.now().isoformat()
             # 1. GPS
             gps_status = "NOT WORKING"
@@ -130,6 +147,7 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
             time.sleep(1)
 
     # Print uptime stats
+    print("\n[INFO] Test complete. Uptime summary:")
     for subsystem in subsystems:
         up = up_counts[subsystem]
         total = total_counts[subsystem]
