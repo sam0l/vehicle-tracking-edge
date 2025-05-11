@@ -140,31 +140,34 @@ class VehicleTracker:
 
                     # Send detection data (signs)
                     if self.sign_detector and data.get("signs") and frame is not None:
-                        if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
-                            image_base64 = None
-                            if self.config['yolo']['send_images']:
-                                _, buffer = cv2.imencode('.jpg', frame)
-                                image_base64 = base64.b64encode(buffer).decode('utf-8')
-                            for sign in data["signs"]:
-                                detection_data = {
-                                    "latitude": data["gps"]["latitude"],
-                                    "longitude": data["gps"]["longitude"],
-                                    "speed": data["gps"].get("speed", 0.0),
-                                    "timestamp": timestamp,
-                                    "sign_type": sign["label"],
-                                    "confidence": sign["confidence"]
-                                }
-                                if image_base64:
-                                    detection_data["image"] = image_base64
-                                payload_bytes = len(json.dumps(detection_data).encode('utf-8'))
-                                self.logger.debug(f"[SEND] Attempting to send detection data (size: {payload_bytes} bytes): {detection_data}")
-                                response = requests.post(url, json=detection_data, timeout=30)
-                                response.raise_for_status()
-                                response_bytes = len(response.content)
-                                self.sim_monitor.log_data_usage(payload_bytes, response_bytes)
-                                self.logger.info(f"[SEND] Detection data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
-                        else:
-                            self.logger.warning("Detections present but no valid GPS data. Detection POST skipped. Detection payload(s): " + str(data.get("signs")))
+                        gps_data = data.get("gps") if data.get("gps") else {}
+                        lat = gps_data.get("latitude", 0.0)
+                        lon = gps_data.get("longitude", 0.0)
+                        spd = gps_data.get("speed", 0.0)
+                        if not (gps_data.get("latitude") and gps_data.get("longitude")):
+                            self.logger.warning("Sending detections without valid GPS data (lat/lon set to 0.0)")
+                        image_base64 = None
+                        if self.config['yolo']['send_images']:
+                            _, buffer = cv2.imencode('.jpg', frame)
+                            image_base64 = base64.b64encode(buffer).decode('utf-8')
+                        for sign in data["signs"]:
+                            detection_data = {
+                                "latitude": lat,
+                                "longitude": lon,
+                                "speed": spd,
+                                "timestamp": timestamp,
+                                "sign_type": sign["label"],
+                                "confidence": sign["confidence"]
+                            }
+                            if image_base64:
+                                detection_data["image"] = image_base64
+                            payload_bytes = len(json.dumps(detection_data).encode('utf-8'))
+                            self.logger.debug(f"[SEND] Attempting to send detection data (size: {payload_bytes} bytes): {detection_data}")
+                            response = requests.post(url, json=detection_data, timeout=30)
+                            response.raise_for_status()
+                            response_bytes = len(response.content)
+                            self.sim_monitor.log_data_usage(payload_bytes, response_bytes)
+                            self.logger.info(f"[SEND] Detection data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
                     elif data.get("signs"):
                         self.logger.warning("Detections present but sign_detector or frame missing. Detection POST skipped. Detection payload(s): " + str(data.get("signs")))
 
