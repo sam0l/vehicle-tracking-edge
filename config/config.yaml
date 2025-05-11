@@ -5,7 +5,7 @@ camera:
   fps: 30
 yolo:
   model_path: "models/yolov8n.onnx"
-  confidence_threshold: 0.7
+  confidence_threshold: 0.5
   imgsz: 640
   iou_threshold: 0.5
   send_images: true
@@ -40,6 +40,9 @@ logging:
     gps: 1
     imu: 0.1
     camera: 5
+
+network:
+  retries: 3
 
 api:
   port: 5000

@@ -14,6 +14,8 @@ from src.gps import GPS
 from src.imu import IMU
 from src.camera import Camera
 from src.sign_detection import SignDetector
+import urllib.parse
+import traceback
 
 app = Flask(__name__)
 
@@ -128,70 +130,97 @@ class VehicleTracker:
             return False
 
         try:
-            url = f"{self.config['backend']['url']}{self.config['backend']['endpoint_prefix']}{self.config['backend']['detection_endpoint']}"
-            timestamp = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S").isoformat()
-            retries = 3
-            for attempt in range(retries):
-                try:
-                    # Send telemetry data (GPS)
-                    if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
-                        telemetry_data = {
-                            "latitude": data["gps"]["latitude"],
-                            "longitude": data["gps"]["longitude"],
-                            "speed": data["gps"]["speed"] if data["gps"]["speed"] is not None else 0.0,
-                            "timestamp": timestamp
-                        }
-                        self.logger.debug(f"Sending telemetry data (size: {len(json.dumps(telemetry_data))} bytes)")
+            # Use urljoin to construct the URL safely
+            base_url = self.config['backend']['url']
+            prefix = self.config['backend']['endpoint_prefix']
+            endpoint = self.config['backend']['detection_endpoint']
+            url = urllib.parse.urljoin(base_url.rstrip('/') + '/', prefix.strip('/') + '/')
+            url = urllib.parse.urljoin(url, endpoint.lstrip('/'))
+
+            # Handle malformed timestamps gracefully
+            try:
+                timestamp = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S").isoformat()
+            except Exception as e:
+                self.logger.error(f"Malformed timestamp: {data.get('timestamp')}, error: {e}")
+                timestamp = datetime.now().isoformat()
+
+            # Get retry count from config, default to 3
+            retries = self.config.get('network', {}).get('retries', 3)
+
+            # Send telemetry data (GPS)
+            gps_sent = False
+            if (
+                data.get("gps") and
+                data["gps"].get("latitude") is not None and
+                data["gps"].get("longitude") is not None
+            ):
+                telemetry_data = {
+                    "latitude": data["gps"]["latitude"],
+                    "longitude": data["gps"]["longitude"],
+                    "speed": data["gps"].get("speed") if data["gps"].get("speed") is not None else 0.0,
+                    "timestamp": timestamp
+                }
+                telemetry_json = json.dumps(telemetry_data)
+                for attempt in range(retries):
+                    try:
+                        self.logger.debug(f"Sending telemetry data (size: {len(telemetry_json)} bytes)")
                         response = requests.post(url, json=telemetry_data, timeout=30)
                         response.raise_for_status()
                         self.logger.info("Telemetry data sent successfully")
-                        
-                        # Update data consumption statistics
-                        self.sim_monitor.update_data_consumption(
-                            len(json.dumps(telemetry_data)),
-                            len(response.content)
-                        )
-                    else:
-                        self.logger.debug("No valid GPS data to send")
+                        self.sim_monitor.update_data_consumption(len(telemetry_json), len(response.content))
+                        gps_sent = True
+                        break
+                    except requests.RequestException as e:
+                        self.logger.warning(f"Attempt {attempt+1}/{retries} failed to send telemetry data: {e}")
+                        if attempt < retries - 1:
+                            time.sleep(2)
+                        continue
+                if not gps_sent:
+                    self.logger.error(f"All retry attempts failed for telemetry data: {telemetry_data}")
+            else:
+                self.logger.debug("No valid GPS data to send")
 
-                    # Send detection data (signs)
-                    if self.sign_detector and data.get("signs") and frame is not None:
-                        image_base64 = None
-                        if self.config['yolo']['send_images']:
-                            _, buffer = cv2.imencode('.jpg', frame)
-                            image_base64 = base64.b64encode(buffer).decode('utf-8')
-                        for sign in data["signs"]:
-                            detection_data = {
-                                "latitude": data["gps"]["latitude"] if data.get("gps") and data["gps"].get("latitude") else 0.0,
-                                "longitude": data["gps"]["longitude"] if data.get("gps") and data["gps"].get("longitude") else 0.0,
-                                "speed": data["gps"]["speed"] if data.get("gps") and data["gps"].get("speed") else 0.0,
-                                "timestamp": timestamp,
-                                "sign_type": sign["label"],
-                                "confidence": sign["confidence"]
-                            }
-                            if image_base64:
-                                detection_data["image"] = image_base64
-                            self.logger.debug(f"Sending detection data (size: {len(json.dumps(detection_data))} bytes)")
+            # Send detection data (signs)
+            signs_sent = True
+            if self.sign_detector and data.get("signs") and frame is not None:
+                image_base64 = None
+                if self.config['yolo']['send_images']:
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    image_base64 = base64.b64encode(buffer).decode('utf-8')
+                for sign in data["signs"]:
+                    detection_data = {
+                        "latitude": data["gps"].get("latitude") if data.get("gps") and data["gps"].get("latitude") is not None else 0.0,
+                        "longitude": data["gps"].get("longitude") if data.get("gps") and data["gps"].get("longitude") is not None else 0.0,
+                        "speed": data["gps"].get("speed") if data.get("gps") and data["gps"].get("speed") is not None else 0.0,
+                        "timestamp": timestamp,
+                        "sign_type": sign["label"],
+                        "confidence": sign["confidence"]
+                    }
+                    if image_base64:
+                        detection_data["image"] = image_base64
+                    detection_json = json.dumps(detection_data)
+                    sign_sent = False
+                    for attempt in range(retries):
+                        try:
+                            self.logger.debug(f"Sending detection data for sign {sign['label']} (size: {len(detection_json)} bytes)")
                             response = requests.post(url, json=detection_data, timeout=30)
                             response.raise_for_status()
-                            
-                            # Update data consumption statistics
-                            self.sim_monitor.update_data_consumption(
-                                len(json.dumps(detection_data)),
-                                len(response.content)
-                            )
-                        self.logger.info("Detection data sent successfully")
-
-                    return True
-                except requests.RequestException as e:
-                    self.logger.warning(f"Attempt {attempt+1}/{retries} failed: {e}")
-                    if attempt < retries - 1:
-                        time.sleep(2)
-                    continue
-            self.logger.error("All retry attempts failed")
-            return False
+                            self.logger.info(f"Detection data for sign {sign['label']} sent successfully")
+                            self.sim_monitor.update_data_consumption(len(detection_json), len(response.content))
+                            sign_sent = True
+                            break
+                        except requests.RequestException as e:
+                            self.logger.warning(f"Attempt {attempt+1}/{retries} failed to send detection data for sign {sign['label']}: {e}")
+                            if attempt < retries - 1:
+                                time.sleep(2)
+                            continue
+                    if not sign_sent:
+                        self.logger.error(f"All retry attempts failed for detection data: {detection_data}")
+                        signs_sent = False
+            # Return True if at least telemetry or one sign was sent
+            return gps_sent or signs_sent
         except Exception as e:
-            self.logger.error(f"Unexpected error sending data: {e}")
+            self.logger.error(f"Unexpected error sending data: {e}\n{traceback.format_exc()}")
             return False
 
     def log_offline(self, data):
