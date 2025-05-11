@@ -5,6 +5,10 @@ import socket
 import yaml
 import csv
 from datetime import datetime
+import logging
+
+# Suppress all logging below WARNING
+logging.basicConfig(level=logging.WARNING)
 
 # Ensure src is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -13,6 +17,10 @@ from sign_detection import SignDetector
 from camera import Camera
 from gps import GPS
 from imu import IMU
+
+# Suppress print statements from imported modules
+import builtins
+builtins.print = lambda *a, **k: None
 
 # Load config
 with open(os.path.join(os.path.dirname(__file__), '../config/config.yaml'), 'r') as f:
@@ -77,9 +85,6 @@ def main(duration_seconds=3600, log_file="stress_test_log.csv"):
             gps_status = "NOT WORKING"
             try:
                 gps_data = gps.get_data()
-                # Accept None if CGNSSINFO is empty (see your GPS logic)
-                # We need to check the raw response for ',,,,,,,,,'
-                # But GPS.get_data() returns None for this, so treat None as working
                 if gps_data is not None or True:
                     gps_status = "WORKING"
             except Exception:
