@@ -200,6 +200,15 @@ class VehicleTracker:
         except Exception as e:
             self.logger.error(f"Failed to send SIM data: {e}")
 
+    def setup_routes(self):
+        @self.app.route('/api/data-usage')
+        def get_data_usage():
+            return jsonify({
+                '1d': self.sim_monitor.get_usage_stats('1d'),
+                '1w': self.sim_monitor.get_usage_stats('1w'),
+                '1m': self.sim_monitor.get_usage_stats('1m')
+            })
+
     def run(self):
         if not self.initialize():
             self.logger.error("Initialization failed, exiting")
