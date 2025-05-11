@@ -33,12 +33,11 @@ def letterbox(img, new_shape: Union[int, Tuple[int, int]], color=(114, 114, 114)
 
 def draw_boxes_on_image(img, boxes, class_ids, confidences, class_names):
     img = img.copy()
-    h, w = img.shape[:2]
     for box, class_id, conf in zip(boxes, class_ids, confidences):
-        x1 = int(box[0] * w)
-        y1 = int(box[1] * h)
-        x2 = int(box[2] * w)
-        y2 = int(box[3] * h)
+        x1 = int(box[0])
+        y1 = int(box[1])
+        x2 = int(box[2])
+        y2 = int(box[3])
         label = f"{class_names[class_id]}: {conf:.2f}"
         color = (0, 255, 0)
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
