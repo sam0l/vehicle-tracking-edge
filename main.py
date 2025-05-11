@@ -8,12 +8,15 @@ import cv2
 import base64
 import socket
 from datetime import datetime
+from flask import Flask, jsonify
 from src.gps import GPS
 from src.imu import IMU
 from src.camera import Camera
 from src.sign_detection import SignDetector
 from src.sim_monitor import SimMonitor
 import threading
+
+app = Flask(__name__)
 
 class VehicleTracker:
     def __init__(self, config_path):
