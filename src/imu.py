@@ -1,8 +1,14 @@
 import smbus2
 import time
 import logging
+import math
 
 class IMU:
+    """
+    IMU class for ICM-20689 with speed estimation and simple dead reckoning.
+    Use update_gps(gps_data) to provide latest GPS data (dict with 'latitude', 'longitude', 'speed', 'heading').
+    Use get_speed() and get_position() to get current speed and position estimates.
+    """
     # ICM-20689 registers (from datasheet)
     REG_PWR_MGMT_1 = 0x6B
     REG_PWR_MGMT_2 = 0x6C
@@ -45,6 +51,15 @@ class IMU:
         except Exception as e:
             self.logger.error(f"Failed to open I2C bus {i2c_bus}: {e}")
             raise
+        # Dead reckoning state
+        self.last_gps = None
+        self.last_gps_time = None
+        self.last_position = None  # (lat, lon)
+        self.last_heading = None   # degrees
+        self.last_update_time = None
+        self.current_speed = 0.0  # m/s
+        self.current_heading = 0.0  # degrees
+        self.imu_position = None  # (lat, lon)
 
     def _scan_for_imu(self):
         """Scan all possible addresses for the IMU."""
@@ -153,33 +168,98 @@ class IMU:
         self.logger.error("IMU initialization failed after maximum attempts")
         return False
 
+    def update_gps(self, gps_data):
+        """
+        Update IMU with latest GPS data. gps_data should be a dict with keys: 'latitude', 'longitude', 'speed', 'heading' (optional).
+        """
+        if gps_data is None:
+            return
+        lat = gps_data.get('latitude')
+        lon = gps_data.get('longitude')
+        speed = gps_data.get('speed')
+        heading = gps_data.get('heading')
+        now = time.time()
+        if lat is not None and lon is not None:
+            self.last_position = (lat, lon)
+            self.imu_position = (lat, lon)
+        if speed is not None:
+            self.current_speed = speed
+        if heading is not None:
+            self.current_heading = heading
+        self.last_gps = gps_data
+        self.last_gps_time = now
+        self.last_update_time = now
+
+    def get_speed(self):
+        """
+        Return current speed estimate (prefer GPS, fallback to IMU integration).
+        """
+        # If GPS speed is recent (<5s), use it
+        if self.last_gps_time and (time.time() - self.last_gps_time) < 5:
+            return self.current_speed
+        # Otherwise, fallback to IMU speed estimate
+        return self.current_speed
+
+    def get_position(self):
+        """
+        Return current position estimate (prefer GPS, fallback to dead reckoning).
+        """
+        # If GPS is recent (<5s), use it
+        if self.last_gps_time and (time.time() - self.last_gps_time) < 5 and self.last_position:
+            return self.last_position
+        # Otherwise, use dead reckoning
+        if self.imu_position and self.current_speed > 0:
+            dt = time.time() - (self.last_update_time or time.time())
+            # Use last known heading (degrees)
+            heading_rad = math.radians(self.current_heading)
+            # Distance moved in meters
+            distance = self.current_speed * dt
+            # Approximate conversion: 1 deg latitude ~ 111320m, 1 deg longitude ~ 111320*cos(lat)
+            lat, lon = self.imu_position
+            dlat = (distance * math.cos(heading_rad)) / 111320.0
+            dlon = (distance * math.sin(heading_rad)) / (111320.0 * math.cos(math.radians(lat)) if lat else 1)
+            new_lat = lat + dlat
+            new_lon = lon + dlon
+            self.imu_position = (new_lat, new_lon)
+            self.last_update_time = time.time()
+            return self.imu_position
+        # If no data, return None
+        return self.last_position
+
     def read_data(self):
-        """Read data from the IMU, handling address changes if needed."""
+        """
+        Read data from the IMU, handling address changes if needed. Also update speed estimate by integrating acceleration.
+        """
         current_time = time.time()
-        
-        # Periodically check if we need to verify the address
         if current_time - self.last_address_check >= self.address_check_interval:
             if not self._verify_address():
                 if not self._switch_to_valid_address():
                     self.logger.error("Cannot read IMU data: no valid address")
                     return None
             self.last_address_check = current_time
-
         try:
-            # Read 14 bytes (accel x,y,z + temp + gyro x,y,z)
             data = self.bus.read_i2c_block_data(self.address, self.REG_ACCEL_XOUT_H, 14)
-
-            # Convert to signed 16-bit
             def to_signed(val):
                 return val - 65536 if val > 32767 else val
-
             accel_x = to_signed((data[0] << 8) | data[1]) * self.accel_scale
             accel_y = to_signed((data[2] << 8) | data[3]) * self.accel_scale
             accel_z = to_signed((data[4] << 8) | data[5]) * self.accel_scale
             gyro_x = to_signed((data[8] << 8) | data[9]) * self.gyro_scale
             gyro_y = to_signed((data[10] << 8) | data[11]) * self.gyro_scale
             gyro_z = to_signed((data[12] << 8) | data[13]) * self.gyro_scale
-
+            # --- Speed estimation (simple integration, only when GPS is not available) ---
+            now = time.time()
+            dt = now - (self.last_update_time or now)
+            # Only integrate if GPS is not recent
+            if not (self.last_gps_time and (now - self.last_gps_time) < 5):
+                # Use horizontal acceleration (ignore gravity, assume flat)
+                acc_horiz = math.sqrt(accel_x**2 + accel_y**2)
+                self.current_speed += acc_horiz * dt
+                self.current_speed = max(0.0, self.current_speed)  # No negative speed
+                # Update heading from gyro_z (yaw rate, deg/s)
+                self.current_heading += gyro_z * dt
+                self.current_heading = self.current_heading % 360
+            self.last_update_time = now
             return {
                 "accel_x": accel_x,  # g
                 "accel_y": accel_y,
@@ -187,12 +267,14 @@ class IMU:
                 "gyro_x": gyro_x,    # deg/s
                 "gyro_y": gyro_y,
                 "gyro_z": gyro_z,
+                "speed": self.get_speed(),
+                "position": self.get_position(),
+                "heading": self.current_heading
             }
         except Exception as e:
             self.logger.error(f"Error reading IMU data at address 0x{self.address:02x}: {e}")
-            # Try to recover by switching address
             if self._switch_to_valid_address():
-                return self.read_data()  # Retry reading after address switch
+                return self.read_data()
             return None
 
     def close(self):
