@@ -62,6 +62,8 @@ class VehicleTracker:
             check_interval=self.config['sim'].get('check_interval', 3600),
             usage_file=self.config['sim'].get('usage_file', 'data_usage.json')
         )
+        self.app = app  # Store Flask app as instance variable
+        self.setup_routes()
 
     def setup_logging(self):
         logging.basicConfig(
@@ -202,7 +204,7 @@ class VehicleTracker:
 
         # Start Flask in a separate thread
         import threading
-        flask_thread = threading.Thread(target=app.run, kwargs={
+        flask_thread = threading.Thread(target=self.app.run, kwargs={
             'host': '0.0.0.0',
             'port': self.config['api']['port']
         })
