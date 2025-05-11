@@ -82,6 +82,7 @@ def generate_video_stream():
             time.sleep(0.1)
             continue
 
+        # Letterbox params
         imgsz = detector.imgsz
         if isinstance(imgsz, int):
             imgsz = (imgsz, imgsz)
@@ -91,11 +92,11 @@ def generate_video_stream():
         dw, dh = imgsz[1] - new_unpad[0], imgsz[0] - new_unpad[1]
         dw /= 2
         dh /= 2
-        logger.info(f"Letterbox params: r={r}, dw={dw}, dh={dh}, frame shape={frame.shape}")
 
         detections = detector.detect(frame)
-        logger.info(f'Detections this frame: {len(detections)}')
         boxes = []
+        class_ids = []
+        confidences = []
         for d in detections:
             # Unletterbox
             x1 = (d['box'][0] - dw) / r
@@ -103,22 +104,14 @@ def generate_video_stream():
             x2 = (d['box'][2] - dw) / r
             y2 = (d['box'][3] - dh) / r
             # Clip
-            x1 = int(max(0, min(w-1, x1)))
-            y1 = int(max(0, min(h-1, y1)))
-            x2 = int(max(0, min(w-1, x2)))
-            y2 = int(max(0, min(h-1, y2)))
-            logger.info(f"Original detection box: {d['box']}")
-            logger.info(f"Transformed box: {[x1, y1, x2, y2]}")
-            # Only draw if box is at least partially in frame
-            if x2 > 0 and x1 < w and y2 > 0 and y1 < h:
-                boxes.append([x1, y1, x2, y2])
+            x1 = int(np.clip(x1, 0, w-1))
+            y1 = int(np.clip(y1, 0, h-1))
+            x2 = int(np.clip(x2, 0, w-1))
+            y2 = int(np.clip(y2, 0, h-1))
+            boxes.append([x1, y1, x2, y2])
+            class_ids.append(detector.class_names.index(d['label']))
+            confidences.append(d['confidence'])
         if boxes:
-            class_ids = [detector.class_names.index(d['label']) for d in detections]
-            confidences = [d['confidence'] for d in detections]
-            first_det = detections[0]
-            logger.info(f"First detection: label={first_det['label']}, conf={first_det['confidence']:.2f}, box={first_det['box']}")
-            logger.info(f'Drawing on image of shape: {frame.shape}')
-            logger.info(f'Boxes: {boxes}')
             frame = draw_boxes_on_image(
                 frame,
                 np.array(boxes),
@@ -126,8 +119,6 @@ def generate_video_stream():
                 np.array(confidences),
                 detector.class_names
             )
-        else:
-            logger.info('No detections to draw.')
 
         ret, jpeg = cv2.imencode('.jpg', frame)
         if not ret:
