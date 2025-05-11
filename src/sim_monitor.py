@@ -3,142 +3,68 @@ import logging
 import time
 import requests
 from datetime import datetime
+import json
+from collections import deque
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class SimMonitor:
-    def __init__(self, port="/dev/ttyUSB1", baudrate=115200):
+    def __init__(self, port="/dev/ttyUSB1", baudrate=115200, check_interval=3600, usage_file="data_usage.json"):
         self.port = port
         self.baudrate = baudrate
-        self.serial = None
-        logger.info(f"Initializing SIM monitor on port {port} with baudrate {baudrate}")
-        self.initialize()
+        self.check_interval = check_interval
+        self.usage_file = usage_file
+        self.usage_log = deque(maxlen=10000)  # Keep last 10k records in memory
+        self.load_usage()
 
-    def initialize(self):
+    def load_usage(self):
         try:
-            logger.info("Opening serial port for SIM module...")
-            self.serial = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=1
-            )
-            # Test AT command
-            logger.info("Testing AT command...")
-            response = self.send_at_command("AT")
-            if "OK" not in response:
-                logger.error(f"Modem not responding to AT command. Response: {response}")
-                raise Exception("Modem not responding to AT command")
-            logger.info("SIM monitor initialized successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize SIM monitor: {e}")
-            return False
+            with open(self.usage_file, 'r') as f:
+                self.usage_log = deque(json.load(f), maxlen=10000)
+        except Exception:
+            self.usage_log = deque(maxlen=10000)
 
-    def send_at_command(self, command, wait_time=1):
+    def save_usage(self):
         try:
-            logger.debug(f"Sending AT command: {command}")
-            self.serial.write(f"{command}\r\n".encode())
-            time.sleep(wait_time)
-            response = ""
-            while self.serial.in_waiting:
-                response += self.serial.read(self.serial.in_waiting).decode()
-            logger.debug(f"Received response: {response}")
-            return response.strip()
+            with open(self.usage_file, 'w') as f:
+                json.dump(list(self.usage_log), f)
         except Exception as e:
-            logger.error(f"Error sending AT command {command}: {e}")
-            return None
+            logger.error(f"Failed to save usage log: {e}")
 
-    def check_sim_balance(self):
-        """Get SIM balance using USSD command."""
-        try:
-            logger.info("Checking SIM balance...")
-            # First check if SIM is ready
-            response = self.send_at_command("AT+CPIN?")
-            if "READY" not in response:
-                logger.error(f"SIM not ready. Response: {response}")
-                return None
+    def log_data_usage(self, bytes_sent, bytes_received):
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "bytes_sent": bytes_sent,
+            "bytes_received": bytes_received
+        }
+        self.usage_log.append(entry)
+        self.save_usage()
 
-            # Get SIM balance using USSD command
-            logger.info("Sending USSD balance check command...")
-            response = self.send_at_command('AT+CUSD=1,"*221#",15', wait_time=5)
-            if response:
-                logger.info(f"Received balance response: {response}")
-                return {
-                    "balance": response,
-                    "timestamp": datetime.now().isoformat()
-                }
-            logger.warning("No response received for balance check")
-            return None
-        except Exception as e:
-            logger.error(f"Error checking SIM balance: {e}")
-            return None
-
-    def get_data_usage(self):
-        """Get data usage statistics."""
-        try:
-            logger.info("Getting data usage statistics...")
-            # Get PDP context info
-            response = self.send_at_command("AT+CGDCONT?")
-            if not response:
-                logger.warning("No response received for data usage check")
-                return None
-
-            logger.info(f"Received data usage response: {response}")
-            return {
-                "usage": response,
-                "timestamp": datetime.now().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Error getting data usage: {e}")
-            return None
-
-    def get_signal_strength(self):
-        """Get signal strength."""
-        try:
-            logger.info("Getting signal strength...")
-            response = self.send_at_command("AT+CSQ")
-            if response:
-                logger.info(f"Received signal strength: {response}")
-                return {
-                    "signal": response,
-                    "timestamp": datetime.now().isoformat()
-                }
-            logger.warning("No response received for signal strength check")
-            return None
-        except Exception as e:
-            logger.error(f"Error getting signal strength: {e}")
-            return None
-
-    def get_network_info(self):
-        """Get network information."""
-        try:
-            logger.info("Getting network information...")
-            # Get network registration status and operator info
-            reg_status = self.send_at_command("AT+CREG?")
-            operator = self.send_at_command("AT+COPS?")
-
-            logger.info(f"Network registration status: {reg_status}")
-            logger.info(f"Network operator: {operator}")
-
-            return {
-                "registration": reg_status,
-                "operator": operator,
-                "timestamp": datetime.now().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Error getting network info: {e}")
-            return None
+    def get_usage_stats(self, period="1d"):
+        now = datetime.now()
+        if period == "1d":
+            cutoff = now.timestamp() - 86400
+        elif period == "1w":
+            cutoff = now.timestamp() - 7*86400
+        elif period == "1m":
+            cutoff = now.timestamp() - 30*86400
+        else:
+            cutoff = 0
+        sent = 0
+        received = 0
+        points = []
+        for entry in self.usage_log:
+            ts = datetime.fromisoformat(entry["timestamp"]).timestamp()
+            if ts >= cutoff:
+                sent += entry["bytes_sent"]
+                received += entry["bytes_received"]
+                points.append({"timestamp": entry["timestamp"], "bytes_sent": entry["bytes_sent"], "bytes_received": entry["bytes_received"]})
+        return {"bytes_sent": sent, "bytes_received": received, "points": points}
 
     def close(self):
-        """Close the serial connection."""
-        if self.serial and self.serial.is_open:
-            logger.info("Closing SIM monitor serial connection")
-            self.serial.close()
+        pass
 
 def send_to_backend(balance_info, data_usage, network_info, signal_strength):
     """Send SIM data to backend."""
@@ -164,10 +90,16 @@ def send_to_backend(balance_info, data_usage, network_info, signal_strength):
         logger.error(f"Error sending SIM data to backend: {e}")
         return False
 
-def sim_monitor_thread():
+def sim_monitor_thread(config=None):
     """Thread to monitor SIM data."""
     logger.info("Starting SIM monitor thread...")
-    monitor = SimMonitor()
+    sim_cfg = config['sim'] if config and 'sim' in config else {}
+    monitor = SimMonitor(
+        port=sim_cfg.get('port', "/dev/ttyUSB1"),
+        baudrate=sim_cfg.get('baudrate', 115200),
+        check_interval=sim_cfg.get('check_interval', 3600),
+        usage_file=sim_cfg.get('usage_file', "data_usage.json")
+    )
     if not monitor.initialize():
         logger.error("Failed to initialize SIM monitor")
         return
@@ -208,8 +140,8 @@ def sim_monitor_thread():
             else:
                 logger.warning("No SIM data collected in this cycle")
 
-            logger.info(f"Waiting {3600} seconds until next SIM data check...")
-            time.sleep(3600)  # Check every hour
+            logger.info(f"Waiting {monitor.check_interval} seconds until next SIM data check...")
+            time.sleep(monitor.check_interval)  # Use configurable interval
     except Exception as e:
         logger.error(f"Error in SIM monitor thread: {e}")
     finally:
@@ -221,6 +153,14 @@ if __name__ == "__main__":
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+    # Load config if available
+    import os
+    import yaml
+    config_path = os.path.join(os.path.dirname(__file__), '../config/config.yaml')
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+    else:
+        config = None
     # Run the monitor
-    sim_monitor_thread() 
+    sim_monitor_thread(config) 

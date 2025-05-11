@@ -53,8 +53,8 @@ class VehicleTracker:
         self.sim_monitor = SimMonitor(
             port=self.config['sim']['port'],
             baudrate=self.config['sim']['baudrate'],
-            ussd_balance_code=self.config['sim'].get('ussd_balance_code', '*221#'),
-            check_interval=self.config['sim'].get('check_interval', 3600)
+            check_interval=self.config['sim'].get('check_interval', 3600),
+            usage_file=self.config['sim'].get('usage_file', 'data_usage.json')
         )
         
         try:
@@ -77,15 +77,13 @@ class VehicleTracker:
         self.setup_routes()
 
     def setup_routes(self):
-        @app.route('/api/sim-data')
-        def get_sim_data():
-            data = self.sim_monitor.get_data_balance()
-            return jsonify(data if data else {'error': 'No data available'})
-
-        @app.route('/api/data-consumption')
-        def get_data_consumption():
-            data = self.sim_monitor.get_data_consumption()
-            return jsonify(data)
+        @app.route('/api/data-usage')
+        def get_data_usage():
+            return jsonify({
+                '1d': self.sim_monitor.get_usage_stats('1d'),
+                '1w': self.sim_monitor.get_usage_stats('1w'),
+                '1m': self.sim_monitor.get_usage_stats('1m')
+            })
 
     def setup_logging(self):
         logging.basicConfig(
@@ -303,12 +301,9 @@ class VehicleTracker:
                     self.camera_initialized = self.camera.initialize()
                     last_camera_init = current_time
 
-                # SIM data
-                if current_time - last_sim >= self.config['logging']['interval']['sim']:
-                    sim_data = self.sim_monitor.get_data_balance()
-                    if sim_data:
-                        data.update({"sim": sim_data})
-                    last_sim = current_time
+                # Data usage logging (simulate or hook into actual data send logic)
+                # Example: self.sim_monitor.log_data_usage(bytes_sent, bytes_received)
+                # You should call this wherever you send/receive data
 
                 # Send data if we have GPS coordinates
                 if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
