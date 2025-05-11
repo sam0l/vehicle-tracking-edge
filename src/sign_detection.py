@@ -100,12 +100,16 @@ class SignDetector:
             raise ValueError(f"Unexpected output shape: {outputs.shape}")
         # Always transpose if output is [1, 19, 8400]
         if len(outputs.shape) == 3 and outputs.shape[0] == 1 and outputs.shape[1] == 19:
+            self.logger.debug(f"Transposing output from shape {outputs.shape} to (1, 8400, 19)")
             outputs = outputs.transpose(0, 2, 1)  # [1, 8400, 19]
         outputs = outputs[0] if len(outputs.shape) == 3 else outputs  # [8400, 19] or [N, 19]
         num_classes = len(self.class_names)
-        if outputs.shape[1] < 5 or outputs.shape[1] != 4 + 1 + num_classes:
-            self.logger.error(f"Unexpected number of columns in output: {outputs.shape[1]}")
+        expected_cols = 4 + num_classes
+        if outputs.shape[1] != expected_cols:
+            self.logger.error(f"Model output columns: {outputs.shape[1]}, expected: {expected_cols} (4 box + {num_classes} classes)")
+            self.logger.error(f"First row of output: {outputs[0] if outputs.shape[0] > 0 else 'N/A'}")
             raise ValueError(f"Unexpected number of columns in output: {outputs.shape[1]}")
+        self.logger.debug(f"Model output shape after processing: {outputs.shape}")
         boxes = outputs[:, :4] # Bounding boxes
         scores = outputs[:, 4:] # Class scores
         self.logger.debug(f"Raw scores min/max/mean: {scores.min():.4f}/{scores.max():.4f}/{scores.mean():.4f}")
@@ -135,6 +139,7 @@ class SignDetector:
         boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
         boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
         # NMS
+        self.logger.debug(f"Running NMS on {len(boxes_xyxy)} boxes")
         indices = cv2.dnn.NMSBoxes(
             boxes_xyxy.tolist(),
             confidences.tolist(),
