@@ -36,11 +36,14 @@ class VehicleTracker:
             self.config['gps']['agps_delay']
         )
         self.imu = IMU(
-            self.config['imu']['i2c_bus'],
-            i2c_address=["0x68", "0x69"]  # Try both addresses due to floating AD0 pin
+            i2c_bus=self.config['imu']['i2c_bus'],
+            i2c_addresses=self.config['imu'].get('i2c_addresses', ["0x68", "0x69"]),
+            sample_rate=self.config['imu'].get('sample_rate', 100),
+            accel_range=self.config['imu'].get('accel_range', 2),
+            gyro_range=self.config['imu'].get('gyro_range', 250)
         )
         self.camera = Camera(
-            self.config['camera']['device_id'],
+            str(self.config['camera']['device_id']),
             self.config['camera']['width'],
             self.config['camera']['height'],
             self.config['camera']['fps']
@@ -49,7 +52,9 @@ class VehicleTracker:
         # Initialize SIM monitor
         self.sim_monitor = SimMonitor(
             port=self.config['sim']['port'],
-            baudrate=self.config['sim']['baudrate']
+            baudrate=self.config['sim']['baudrate'],
+            ussd_balance_code=self.config['sim'].get('ussd_balance_code', '*221#'),
+            check_interval=self.config['sim'].get('check_interval', 3600)
         )
         
         try:
