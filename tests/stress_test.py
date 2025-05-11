@@ -5,10 +5,6 @@ import socket
 import yaml
 import csv
 from datetime import datetime
-import logging
-
-# Suppress all logging below WARNING
-logging.basicConfig(level=logging.WARNING)
 
 # Ensure src is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -17,10 +13,6 @@ from sign_detection import SignDetector
 from camera import Camera
 from gps import GPS
 from imu import IMU
-
-# Suppress print statements from imported modules
-import builtins
-builtins.print = lambda *a, **k: None
 
 # Load config
 with open(os.path.join(os.path.dirname(__file__), '../config/config.yaml'), 'r') as f:
@@ -35,6 +27,11 @@ gps_cfg = config['gps']
 # IMU config
 imu_cfg = config['imu']
 
+# Test duration from config, or default to 12 hours
+DEFAULT_DURATION = 12 * 60 * 60  # 12 hours in seconds
+test_cfg = config.get('test', {})
+duration_seconds = test_cfg.get('duration_seconds', DEFAULT_DURATION)
+
 # Helper: check internet connectivity
 def check_internet(host="8.8.8.8", port=53, timeout=3):
     try:
@@ -44,7 +41,8 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
     except socket.error:
         return False
 
-def main(duration_seconds=3600, log_file="stress_test_log.csv"):
+def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
+    print(f"[INFO] Starting stress test for {duration_seconds} seconds ({duration_seconds/3600:.2f} hours)")
     # Initialize subsystems
     detector = SignDetector(config_path=os.path.join(os.path.dirname(__file__), '../config/config.yaml'))
     camera = Camera(
@@ -123,6 +121,10 @@ def main(duration_seconds=3600, log_file="stress_test_log.csv"):
             total_counts["INTERNET"] += 1
             if internet_status == "WORKING":
                 up_counts["INTERNET"] += 1
+
+            # Print summary line to console
+            summary_line = f"GPS: {gps_status} | IMU: {imu_status} | DETECTION: {detection_status} | INTERNET: {internet_status}"
+            print(summary_line)
 
             writer.writerow([timestamp, gps_status, imu_status, detection_status, internet_status])
             time.sleep(1)
