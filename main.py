@@ -125,13 +125,16 @@ class VehicleTracker:
                         telemetry_data = {
                             "latitude": data["gps"]["latitude"],
                             "longitude": data["gps"]["longitude"],
-                            "speed": data["gps"]["speed"] if data["gps"]["speed"] is not None else 0.0,
+                            "speed": data["gps"]["speed"] if data["gps"].get("speed") is not None else 0.0,
                             "timestamp": timestamp
                         }
-                        self.logger.debug(f"Sending telemetry data (size: {len(json.dumps(telemetry_data))} bytes)")
+                        payload_bytes = len(json.dumps(telemetry_data).encode('utf-8'))
+                        self.logger.debug(f"Sending telemetry data (size: {payload_bytes} bytes): {telemetry_data}")
                         response = requests.post(url, json=telemetry_data, timeout=30)
                         response.raise_for_status()
-                        self.logger.info("Telemetry data sent successfully")
+                        response_bytes = len(response.content)
+                        self.sim_monitor.log_data_usage(payload_bytes, response_bytes)
+                        self.logger.info(f"Telemetry data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
                     else:
                         self.logger.debug("No valid GPS data to send")
 
@@ -152,11 +155,14 @@ class VehicleTracker:
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
+                            payload_bytes = len(json.dumps(detection_data).encode('utf-8'))
                             print(f"[DEBUG] Sending detection payload: {detection_data}")
-                            self.logger.debug(f"Sending detection data (size: {len(json.dumps(detection_data))} bytes)")
+                            self.logger.debug(f"Sending detection data (size: {payload_bytes} bytes): {detection_data}")
                             response = requests.post(url, json=detection_data, timeout=30)
                             response.raise_for_status()
-                        self.logger.info("Detection data sent successfully")
+                            response_bytes = len(response.content)
+                            self.sim_monitor.log_data_usage(payload_bytes, response_bytes)
+                            self.logger.info(f"Detection data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
 
                     return True
                 except requests.RequestException as e:
