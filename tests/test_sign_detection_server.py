@@ -81,16 +81,25 @@ def generate_video_stream():
             logger.error("Failed to capture frame from camera for video stream")
             time.sleep(0.1)
             continue
-        # Run detection and always draw boxes for the stream
+        # Letterbox the frame for detection
+        imgsz = detector.imgsz
+        if isinstance(imgsz, int):
+            imgsz = (imgsz, imgsz)
+        # Preprocess returns (img, r, (dw, dh)), img is NCHW float32
+        img, r, (dw, dh) = detector.preprocess(frame)
+        # Convert back to HWC uint8 for drawing
+        img_for_model = img[0].transpose(1, 2, 0)
+        img_for_model = (img_for_model * 255).astype(np.uint8)
+        img_for_model = cv2.cvtColor(img_for_model, cv2.COLOR_RGB2BGR)
+        # Run detection on the original frame (to use the same pipeline)
         detections = detector.detect(frame)
         if len(detections) > 0:
-            # Extract boxes, class_ids, confidences
             boxes = [d['box'] for d in detections]
             class_ids = [detector.class_names.index(d['label']) for d in detections]
             confidences = [d['confidence'] for d in detections]
-            frame = draw_boxes_on_image(frame, np.array(boxes), np.array(class_ids), np.array(confidences), detector.class_names)
-        # Encode frame as JPEG
-        ret, jpeg = cv2.imencode('.jpg', frame)
+            img_for_model = draw_boxes_on_image(img_for_model, np.array(boxes), np.array(class_ids), np.array(confidences), detector.class_names)
+        # Encode as JPEG
+        ret, jpeg = cv2.imencode('.jpg', img_for_model)
         if not ret:
             logger.error("Failed to encode frame as JPEG for video stream")
             continue
