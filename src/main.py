@@ -171,7 +171,6 @@ class VehicleTracker:
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
-                            print(f"[DEBUG] Sending detection payload: {detection_data}")
                             self.logger.debug(f"Sending detection data (size: {len(json.dumps(detection_data))} bytes)")
                             response = requests.post(url, json=detection_data, timeout=30)
                             response.raise_for_status()
