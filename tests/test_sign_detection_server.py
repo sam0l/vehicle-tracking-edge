@@ -1,10 +1,13 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import cv2
 import logging
 import yaml
 import base64
 import numpy as np
-from flask import Flask, jsonify, request
-from src.sign_detection import SignDetector
+from flask import Flask, jsonify, request, Response
+from src.sign_detection import SignDetector, draw_boxes_on_image
 import threading
 import time
 
@@ -65,6 +68,41 @@ def detect():
         'image': image_b64
     }
     return jsonify(result)
+
+def generate_video_stream():
+    global cap
+    while True:
+        if cap is None or not cap.isOpened():
+            if not init_camera():
+                time.sleep(1)
+                continue
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            logger.error("Failed to capture frame from camera for video stream")
+            time.sleep(0.1)
+            continue
+        # Run detection and draw boxes
+        detections = detector.detect(frame)
+        if detector.draw_boxes and len(detections) > 0:
+            # Draw boxes on the frame
+            # Use the draw_boxes_on_image helper from sign_detection.py
+            # Extract boxes, class_ids, confidences
+            boxes = [d['box'] for d in detections]
+            class_ids = [detector.class_names.index(d['label']) for d in detections]
+            confidences = [d['confidence'] for d in detections]
+            frame = draw_boxes_on_image(frame, np.array(boxes), np.array(class_ids), np.array(confidences), detector.class_names)
+        # Encode frame as JPEG
+        ret, jpeg = cv2.imencode('.jpg', frame)
+        if not ret:
+            logger.error("Failed to encode frame as JPEG for video stream")
+            continue
+        frame_bytes = jpeg.tobytes()
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+@app.route('/video_feed')
+def video_feed():
+    """Stream live video with detection boxes as MJPEG."""
+    return Response(generate_video_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 def run_server():
     app.run(host=test_server_config.get('host', '0.0.0.0'), port=test_server_config.get('port', 8081), debug=False, use_reloader=False)
