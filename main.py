@@ -239,7 +239,6 @@ class VehicleTracker:
                 # SIM data: send every sim_send_interval seconds
                 if current_time - last_sim >= sim_send_interval:
                     sim_data = {}
-                    data_usage = self.sim_monitor.get_data_usage()
                     network_info = self.sim_monitor.get_network_info()
                     signal_strength = self.sim_monitor.get_signal_strength()
                     if any([balance_info, data_usage, network_info, signal_strength]):
