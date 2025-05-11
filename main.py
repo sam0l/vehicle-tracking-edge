@@ -63,7 +63,8 @@ class VehicleTracker:
             port=self.config['sim']['port'],
             baudrate=self.config['sim']['baudrate'],
             check_interval=self.config['sim'].get('check_interval', 3600),
-            usage_file=self.config['sim'].get('usage_file', 'data_usage.json')
+            usage_file=self.config['sim'].get('usage_file', 'data_usage.json'),
+            interfaces=self.config['network'].get('interface', ["ppp0"])
         )
         self.app = app  # Store Flask app as instance variable
         self.setup_routes()
@@ -126,14 +127,15 @@ class VehicleTracker:
                             "latitude": data["gps"]["latitude"],
                             "longitude": data["gps"]["longitude"],
                             "speed": data["gps"].get("speed", 0.0),
-                            "timestamp": timestamp
+                            "timestamp": timestamp,
+                            "connection_status": self.check_connectivity()
                         }
                         payload_bytes = len(json.dumps(telemetry_data).encode('utf-8'))
                         self.logger.debug(f"Sending telemetry data (size: {payload_bytes} bytes): {telemetry_data}")
                         response = requests.post(url, json=telemetry_data, timeout=30)
                         response.raise_for_status()
                         response_bytes = len(response.content)
-                        self.sim_monitor.log_data_usage(payload_bytes, response_bytes)
+                        self.sim_monitor.update_data_usage()
                         self.logger.info(f"Telemetry data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
                     else:
                         self.logger.debug("No valid GPS data to send for telemetry. Telemetry POST skipped.")
@@ -157,7 +159,8 @@ class VehicleTracker:
                                 "speed": spd,
                                 "timestamp": timestamp,
                                 "sign_type": sign["label"],
-                                "confidence": sign["confidence"]
+                                "confidence": sign["confidence"],
+                                "connection_status": self.check_connectivity()
                             }
                             if image_base64:
                                 detection_data["image"] = image_base64
@@ -166,7 +169,7 @@ class VehicleTracker:
                             response = requests.post(url, json=detection_data, timeout=30)
                             response.raise_for_status()
                             response_bytes = len(response.content)
-                            self.sim_monitor.log_data_usage(payload_bytes, response_bytes)
+                            self.sim_monitor.update_data_usage()
                             self.logger.info(f"[SEND] Detection data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
                     elif data.get("signs"):
                         self.logger.warning("Detections present but sign_detector or frame missing. Detection POST skipped. Detection payload(s): " + str(data.get("signs")))
@@ -283,55 +286,65 @@ class VehicleTracker:
             while True:
                 current_time = time.time()
                 data = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S")}
+                frame = None
 
                 # GPS data
                 if current_time - last_gps >= self.config['logging']['interval']['gps']:
-                    gps_data = self.gps.get_data()
-                    if gps_data:
-                        data.update({"gps": gps_data})
-                    else:
-                        self.logger.warning("No valid GPS data received")
+                    try:
+                        gps_data = self.gps.get_data()
+                        if gps_data:
+                            data.update({"gps": gps_data})
+                        else:
+                            self.logger.warning("No valid GPS data received")
+                    except Exception as e:
+                        self.logger.error(f"GPS error: {e}")
                     last_gps = current_time
 
                 # IMU data
                 if current_time - last_imu >= self.config['logging']['interval']['imu']:
-                    imu_data = self.imu.read_data()
-                    if imu_data:
-                        data.update({"imu": imu_data})
+                    try:
+                        imu_data = self.imu.read_data()
+                        if imu_data:
+                            data.update({"imu": imu_data})
+                    except Exception as e:
+                        self.logger.error(f"IMU error: {e}")
                     last_imu = current_time
 
                 # Camera data
                 if self.camera_initialized and current_time - last_camera >= self.config['logging']['interval']['camera']:
-                    frame = self.camera.get_frame()
-                    if frame is not None:
-                        print(f"[DEBUG] Frame captured: {frame.shape}")
-                        if self.sign_detector:
-                            signs = self.sign_detector.detect(frame)
-                            # Shorten or remove base64 image in debug output
-                            debug_signs = []
-                            for s in signs:
-                                s_copy = dict(s)
-                                if 'image' in s_copy:
-                                    s_copy['image'] = s_copy['image'][:32] + '...' if s_copy['image'] else ''
-                                debug_signs.append(s_copy)
-                            print(f"[DEBUG] Detections: {debug_signs}")
-                            if signs:
-                                data.update({"signs": signs})
-                        last_camera = current_time
-                    else:
-                        print("[DEBUG] No frame captured from camera!")
+                    try:
+                        frame = self.camera.get_frame()
+                        if frame is not None:
+                            print(f"[DEBUG] Frame captured: {frame.shape}")
+                            if self.sign_detector:
+                                signs = self.sign_detector.detect(frame)
+                                debug_signs = []
+                                for s in signs:
+                                    s_copy = dict(s)
+                                    if 'image' in s_copy:
+                                        s_copy['image'] = s_copy['image'][:32] + '...' if s_copy['image'] else ''
+                                    debug_signs.append(s_copy)
+                                print(f"[DEBUG] Detections: {debug_signs}")
+                                if signs:
+                                    data.update({"signs": signs})
+                        else:
+                            print("[DEBUG] No frame captured from camera!")
+                    except Exception as e:
+                        self.logger.error(f"Camera error: {e}")
+                    last_camera = current_time
                 elif not self.camera_initialized and current_time - last_camera_init >= camera_init_interval:
-                    self.camera_initialized = self.camera.initialize()
+                    try:
+                        self.camera_initialized = self.camera.initialize()
+                    except Exception as e:
+                        self.logger.error(f"Camera init error: {e}")
                     last_camera_init = current_time
 
-                # Data usage logging is handled in send_data via self.sim_monitor.update_data_consumption
-
-                # Send data if we have GPS coordinates
-                if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
-                    if not self.send_data(data, frame if 'frame' in locals() else None):
+                # Send data if we have GPS or detections
+                if (data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude")) or data.get("signs"):
+                    if not self.send_data(data, frame if frame is not None else None):
                         self.log_offline(data)
                 else:
-                    self.logger.debug("No valid GPS data to send")
+                    self.logger.debug("No valid GPS or detection data to send")
 
                 # Try to send any offline data
                 self.send_offline_data()

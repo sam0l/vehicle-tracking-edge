@@ -5,18 +5,21 @@ import requests
 from datetime import datetime
 import json
 from collections import deque
+import psutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class SimMonitor:
-    def __init__(self, port="/dev/ttyUSB1", baudrate=115200, check_interval=3600, usage_file="data_usage.json"):
+    def __init__(self, port="/dev/ttyUSB1", baudrate=115200, check_interval=3600, usage_file="data_usage.json", interfaces=None):
         self.port = port
         self.baudrate = baudrate
         self.check_interval = check_interval
         self.usage_file = usage_file
         self.usage_log = deque(maxlen=10000)  # Keep last 10k records in memory
+        self.interfaces = interfaces if interfaces else ["ppp0"]
+        self.last_counters = self.get_current_counters()
         self.load_usage()
 
     def load_usage(self):
@@ -63,6 +66,25 @@ class SimMonitor:
                 points.append({"timestamp": entry["timestamp"], "bytes_sent": entry["bytes_sent"], "bytes_received": entry["bytes_received"]})
         return {"bytes_sent": sent, "bytes_received": received, "points": points}
 
+    def get_current_counters(self):
+        counters = psutil.net_io_counters(pernic=True)
+        total_sent = 0
+        total_recv = 0
+        for iface in self.interfaces:
+            if iface in counters:
+                total_sent += counters[iface].bytes_sent
+                total_recv += counters[iface].bytes_recv
+        return {"bytes_sent": total_sent, "bytes_received": total_recv}
+
+    def update_data_usage(self):
+        current = self.get_current_counters()
+        delta_sent = current["bytes_sent"] - self.last_counters["bytes_sent"]
+        delta_recv = current["bytes_received"] - self.last_counters["bytes_received"]
+        # Only log if there was activity
+        if delta_sent > 0 or delta_recv > 0:
+            self.log_data_usage(delta_sent, delta_recv)
+        self.last_counters = current
+
     def close(self):
         pass
 
@@ -98,7 +120,8 @@ def sim_monitor_thread(config=None):
         port=sim_cfg.get('port', "/dev/ttyUSB1"),
         baudrate=sim_cfg.get('baudrate', 115200),
         check_interval=sim_cfg.get('check_interval', 3600),
-        usage_file=sim_cfg.get('usage_file', "data_usage.json")
+        usage_file=sim_cfg.get('usage_file', "data_usage.json"),
+        interfaces=sim_cfg.get('interfaces', None)
     )
     if not monitor.initialize():
         logger.error("Failed to initialize SIM monitor")
