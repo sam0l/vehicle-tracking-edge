@@ -261,7 +261,7 @@ class VehicleTracker:
         flask_thread.daemon = True
         flask_thread.start()
 
-        last_gps = last_imu = last_camera = last_camera_init = last_sim = 0
+        last_gps = last_imu = last_camera = last_camera_init = 0
         camera_init_interval = 30  # Retry camera every 30 seconds if failed
         try:
             while True:

@@ -19,7 +19,7 @@ class IMU:
     # Expected device ID for ICM-20689
     EXPECTED_WHO_AM_I = 0x98
 
-    def __init__(self, i2c_bus, i2c_address=["0x68", "0x69"]):
+    def __init__(self, i2c_bus, i2c_addresses=["0x68", "0x69"], sample_rate=100, accel_range=2, gyro_range=250):
         self.logger = logging.getLogger(__name__)
         self.bus = None
         self.address = None
@@ -27,16 +27,21 @@ class IMU:
         self.address_check_interval = 1.0  # Check address every second
         self.initialization_attempts = 0
         self.max_init_attempts = 3
-        
+        self.i2c_bus = i2c_bus
+        self.i2c_addresses = i2c_addresses
+        self.sample_rate = sample_rate
+        self.accel_range = accel_range
+        self.gyro_range = gyro_range
         try:
             self.bus = smbus2.SMBus(i2c_bus)
             # Convert address(es) to int if provided as hex strings
             self.addresses = [
                 int(addr, 16) if isinstance(addr, str) else addr
-                for addr in (i2c_address if isinstance(i2c_address, list) else [i2c_address])
+                for addr in (i2c_addresses if isinstance(i2c_addresses, list) else [i2c_addresses])
             ]
-            self.accel_scale = 16.0 / 32768.0  # ±16g, 16-bit (2048 LSB/g)
-            self.gyro_scale = 2000.0 / 32768.0  # ±2000dps, 16-bit (16.4 LSB/(°/s))
+            # Set scale based on config
+            self.accel_scale = float(accel_range) / 32768.0
+            self.gyro_scale = float(gyro_range) / 32768.0
         except Exception as e:
             self.logger.error(f"Failed to open I2C bus {i2c_bus}: {e}")
             raise
