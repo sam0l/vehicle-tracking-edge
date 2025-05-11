@@ -191,8 +191,15 @@ class SignDetector:
             )
             detections = []
             output_img = None
-            if self.draw_boxes and len(boxes) > 0:
-                output_img = draw_boxes_on_image(frame, boxes, class_ids, confidences, self.class_names)
+            # Always draw boxes on the letterboxed image for output
+            if len(boxes) > 0:
+                # Convert normalized boxes to 640x640 pixel coordinates
+                boxes_px = np.array(boxes) * 640
+                # Prepare the letterboxed image for drawing
+                img_for_model = img[0].transpose(1, 2, 0)
+                img_for_model = (img_for_model * 255).astype(np.uint8)
+                img_for_model = cv2.cvtColor(img_for_model, cv2.COLOR_RGB2BGR)
+                output_img = draw_boxes_on_image(img_for_model, boxes_px, class_ids, confidences, self.class_names)
             for box, confidence, class_id in zip(boxes, confidences, class_ids):
                 if class_id < 0 or class_id >= len(self.class_names):
                     self.logger.warning(f"Invalid class ID: {class_id} (confidence: {confidence:.3f})")
@@ -205,12 +212,12 @@ class SignDetector:
                     "confidence": float(confidence),
                     "box": box.tolist()
                 }
-                if self.send_images:
-                    if self.draw_boxes and output_img is not None:
-                        _, buffer = cv2.imencode('.jpg', output_img)
-                        detection["image"] = base64.b64encode(buffer).decode('utf-8')
-                    else:
-                        detection["image"] = None
+                # Always include the image with boxes if there are detections
+                if output_img is not None:
+                    _, buffer = cv2.imencode('.jpg', output_img)
+                    detection["image"] = base64.b64encode(buffer).decode('utf-8')
+                else:
+                    detection["image"] = None
                 detections.append(detection)
             print(f"[DEBUG] Number of detections: {len(detections)}")
             return detections
