@@ -86,9 +86,9 @@ def generate_video_stream():
         imgsz = detector.imgsz
         if isinstance(imgsz, int):
             imgsz = (imgsz, imgsz)
-        shape = frame.shape[:2]
-        r = min(imgsz[0] / shape[0], imgsz[1] / shape[1])
-        new_unpad = (int(round(shape[1] * r)), int(round(shape[0] * r)))
+        h, w = frame.shape[:2]
+        r = min(imgsz[0] / h, imgsz[1] / w)
+        new_unpad = (int(round(w * r)), int(round(h * r)))
         dw, dh = imgsz[1] - new_unpad[0], imgsz[0] - new_unpad[1]
         dw /= 2
         dh /= 2
@@ -96,21 +96,22 @@ def generate_video_stream():
         # Run detection
         detections = detector.detect(frame)
         logger.info(f'Detections this frame: {len(detections)}')
-        h, w = frame.shape[:2]
         if len(detections) > 0:
             boxes = []
             for d in detections:
                 # Unletterbox (corrected for 640x360 letterboxed to 640x640)
-                x1 = max(0, min(w, d['box'][0] / r))
+                x1 = max(0, min(w, (d['box'][0] - dw) / r))
                 y1 = max(0, min(h, (d['box'][1] - dh) / r))
-                x2 = max(0, min(w, d['box'][2] / r))
+                x2 = max(0, min(w, (d['box'][2] - dw) / r))
                 y2 = max(0, min(h, (d['box'][3] - dh) / r))
                 logger.info(f"Original detection box: {d['box']}")
                 logger.info(f"Transformed box: {[x1, y1, x2, y2]}")
                 boxes.append([x1, y1, x2, y2])
             class_ids = [detector.class_names.index(d['label']) for d in detections]
             confidences = [d['confidence'] for d in detections]
-            logger.info(f'First detection: {detections[0]}')
+            # Log only label, confidence, and box (not image)
+            first_det = detections[0]
+            logger.info(f"First detection: label={first_det['label']}, conf={first_det['confidence']:.2f}, box={first_det['box']}")
             logger.info(f'Drawing on image of shape: {frame.shape}')
             logger.info(f'Boxes: {boxes}')
             frame = draw_boxes_on_image(
