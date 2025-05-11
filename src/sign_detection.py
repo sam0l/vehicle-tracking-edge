@@ -131,16 +131,16 @@ class SignDetector:
             for box, confidence, class_id in zip(boxes, confidences, class_ids):
                 if class_id < 0 or class_id >= len(self.class_names):
                     self.logger.warning(f"Invalid class ID: {class_id} (confidence: {confidence:.3f})")
-                    continue
+                        continue
                 label = self.class_names[class_id]
                 print(f"Detected: {label} (confidence: {confidence:.3f})")
                 self.logger.info(f"Detected {label} with confidence {confidence:.3f}, box: {box.tolist()}")
-                detection = {
+                    detection = {
                     "label": label,
                     "confidence": float(confidence),
                     "box": box.tolist()
-                }
-                if self.send_images:
+                    }
+                    if self.send_images:
                     detection["image"] = None
                 detections.append(detection)
             print(f"[DEBUG] Number of detections: {len(detections)}")
