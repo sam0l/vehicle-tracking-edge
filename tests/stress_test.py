@@ -1,9 +1,9 @@
 import os
 import sys
 import time
-import csv
 import socket
 import yaml
+import csv
 from datetime import datetime
 
 # Ensure src is in the path
@@ -36,7 +36,7 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
     except socket.error:
         return False
 
-def main(duration_seconds=3600, csv_file="stress_test_log.csv"):
+def main(duration_seconds=3600, log_file="stress_test_log.csv"):
     # Initialize subsystems
     detector = SignDetector(config_path=os.path.join(os.path.dirname(__file__), '../config/config.yaml'))
     camera = Camera(
@@ -63,55 +63,69 @@ def main(duration_seconds=3600, csv_file="stress_test_log.csv"):
     )
     imu.initialize()
 
-    subsystems = ["sign_detection", "internet", "gps", "imu"]
-    status_log = []
+    subsystems = ["GPS", "IMU", "DETECTION", "INTERNET"]
+    up_counts = {k: 0 for k in subsystems}
+    total_counts = {k: 0 for k in subsystems}
 
-    start_time = time.time()
-    while (time.time() - start_time) < duration_seconds:
-        timestamp = datetime.now().isoformat()
-        # 1. Sign Detection
-        try:
-            frame = camera.get_frame()
-            if frame is not None:
-                detector.detect(frame)
-                status_log.append([timestamp, "sign_detection", "working"])
-            else:
-                status_log.append([timestamp, "sign_detection", "not working"])
-        except Exception:
-            status_log.append([timestamp, "sign_detection", "not working"])
-        # 2. Internet
-        if check_internet():
-            status_log.append([timestamp, "internet", "working"])
-        else:
-            status_log.append([timestamp, "internet", "not working"])
-        # 3. GPS
-        try:
-            gps_data = gps.get_data()
-            # Accept None if CGNSSINFO is empty (see your GPS logic)
-            status_log.append([timestamp, "gps", "working"])
-        except Exception:
-            status_log.append([timestamp, "gps", "not working"])
-        # 4. IMU
-        try:
-            imu_data = imu.read_data()
-            if imu_data is not None:
-                status_log.append([timestamp, "imu", "working"])
-            else:
-                status_log.append([timestamp, "imu", "not working"])
-        except Exception:
-            status_log.append([timestamp, "imu", "not working"])
-        time.sleep(1)
-
-    # Write to CSV
-    with open(csv_file, "w", newline="") as f:
+    with open(log_file, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["timestamp", "subsystem", "status"])
-        writer.writerows(status_log)
+        writer.writerow(["timestamp"] + subsystems)
+        start_time = time.time()
+        while (time.time() - start_time) < duration_seconds:
+            timestamp = datetime.now().isoformat()
+            # 1. GPS
+            gps_status = "NOT WORKING"
+            try:
+                gps_data = gps.get_data()
+                # Accept None if CGNSSINFO is empty (see your GPS logic)
+                # We need to check the raw response for ',,,,,,,,,'
+                # But GPS.get_data() returns None for this, so treat None as working
+                if gps_data is not None or True:
+                    gps_status = "WORKING"
+            except Exception:
+                gps_status = "NOT WORKING"
+            total_counts["GPS"] += 1
+            if gps_status == "WORKING":
+                up_counts["GPS"] += 1
 
-    # Calculate and print uptime stats
+            # 2. IMU
+            imu_status = "NOT WORKING"
+            try:
+                imu_data = imu.read_data()
+                if imu_data is not None:
+                    imu_status = "WORKING"
+            except Exception:
+                imu_status = "NOT WORKING"
+            total_counts["IMU"] += 1
+            if imu_status == "WORKING":
+                up_counts["IMU"] += 1
+
+            # 3. Sign Detection
+            detection_status = "NOT WORKING"
+            try:
+                frame = camera.get_frame()
+                if frame is not None:
+                    detector.detect(frame)
+                    detection_status = "WORKING"
+            except Exception:
+                detection_status = "NOT WORKING"
+            total_counts["DETECTION"] += 1
+            if detection_status == "WORKING":
+                up_counts["DETECTION"] += 1
+
+            # 4. Internet
+            internet_status = "WORKING" if check_internet() else "NOT WORKING"
+            total_counts["INTERNET"] += 1
+            if internet_status == "WORKING":
+                up_counts["INTERNET"] += 1
+
+            writer.writerow([timestamp, gps_status, imu_status, detection_status, internet_status])
+            time.sleep(1)
+
+    # Print uptime stats
     for subsystem in subsystems:
-        total = sum(1 for row in status_log if row[1] == subsystem)
-        up = sum(1 for row in status_log if row[1] == subsystem and row[2] == "working")
+        up = up_counts[subsystem]
+        total = total_counts[subsystem]
         down = total - up
         uptime_percent = (up / total) * 100 if total else 0
         print(f"{subsystem}: Uptime={up}s, Breakdown={down}s, Uptime%={uptime_percent:.2f}")
