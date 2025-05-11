@@ -209,6 +209,42 @@ class VehicleTracker:
                 '1m': self.sim_monitor.get_usage_stats('1m')
             })
 
+    def post_data_usage_loop(self):
+        interval = self.config['sim'].get('usage_post_interval', 30)
+        backend_url = f"{self.config['backend']['url']}/api/data-usage"
+        last_post_time = time.time()
+        last_bytes_sent = 0
+        last_bytes_received = 0
+        while True:
+            try:
+                time.sleep(interval)
+                # Get usage for the last interval
+                usage_stats = self.sim_monitor.get_usage_stats('1d')
+                now = datetime.utcnow().isoformat()
+                bytes_sent = usage_stats['bytes_sent']
+                bytes_received = usage_stats['bytes_received']
+                # Calculate delta since last post
+                delta_sent = bytes_sent - last_bytes_sent
+                delta_received = bytes_received - last_bytes_received
+                if delta_sent < 0 or delta_received < 0:
+                    # If log rotated or reset, just send current
+                    delta_sent = bytes_sent
+                    delta_received = bytes_received
+                payload = {
+                    'timestamp': now,
+                    'bytes_sent': delta_sent,
+                    'bytes_received': delta_received
+                }
+                last_bytes_sent = bytes_sent
+                last_bytes_received = bytes_received
+                response = requests.post(backend_url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    self.logger.info(f"Posted data usage to backend: {payload}")
+                else:
+                    self.logger.warning(f"Failed to post data usage: {response.status_code} {response.text}")
+            except Exception as e:
+                self.logger.warning(f"Error posting data usage: {e}")
+
     def run(self):
         if not self.initialize():
             self.logger.error("Initialization failed, exiting")
@@ -222,6 +258,11 @@ class VehicleTracker:
         })
         flask_thread.daemon = True
         flask_thread.start()
+
+        # Start data usage posting thread
+        usage_thread = threading.Thread(target=self.post_data_usage_loop)
+        usage_thread.daemon = True
+        usage_thread.start()
 
         last_gps = last_imu = last_camera = last_camera_init = 0
         camera_init_interval = 30  # Retry camera every 30 seconds if failed

@@ -44,6 +44,7 @@ sim:
   baudrate: 115200
   ussd_balance_code: "*221#"
   check_interval: 3600
+  usage_post_interval: 30  # Interval in seconds to post data usage to backend
 backend:
   url: "https://vehicle-tracking-backend-bwmz.onrender.com"
   endpoint_prefix: "/api"
