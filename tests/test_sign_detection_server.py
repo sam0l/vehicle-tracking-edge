@@ -95,11 +95,17 @@ def generate_video_stream():
         class_ids = [detector.class_names.index(d['label']) for d in detections]
         confidences = [d['confidence'] for d in detections]
         if boxes:
-            # Convert normalized boxes to 640x640 pixel coordinates
-            boxes_px = np.array(boxes) * 640
+            boxes = np.array(boxes)
+            # Convert (cx, cy, w, h) in pixel space to (x1, y1, x2, y2)
+            x1 = boxes[:, 0] - boxes[:, 2] / 2
+            y1 = boxes[:, 1] - boxes[:, 3] / 2
+            x2 = boxes[:, 0] + boxes[:, 2] / 2
+            y2 = boxes[:, 1] + boxes[:, 3] / 2
+            boxes_xyxy = np.stack([x1, y1, x2, y2], axis=1)
+            print(f"[DEBUG] Drawing boxes (x1, y1, x2, y2): {boxes_xyxy}")
             img_for_model = draw_boxes_on_image(
                 img_for_model,
-                boxes_px,
+                boxes_xyxy,
                 np.array(class_ids),
                 np.array(confidences),
                 detector.class_names
