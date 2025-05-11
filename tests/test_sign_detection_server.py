@@ -84,7 +84,7 @@ def generate_video_stream():
 
         # Preprocess for detection (letterbox)
         img, r, (dw, dh) = detector.preprocess(frame)
-        # Convert back to HWC uint8 for drawing
+        # Convert back to HWC uint8 for drawing (letterboxed 640x640)
         img_for_model = img[0].transpose(1, 2, 0)
         img_for_model = (img_for_model * 255).astype(np.uint8)
         img_for_model = cv2.cvtColor(img_for_model, cv2.COLOR_RGB2BGR)
@@ -95,9 +95,11 @@ def generate_video_stream():
         class_ids = [detector.class_names.index(d['label']) for d in detections]
         confidences = [d['confidence'] for d in detections]
         if boxes:
+            # Convert normalized boxes to 640x640 pixel coordinates
+            boxes_px = np.array(boxes) * 640
             img_for_model = draw_boxes_on_image(
                 img_for_model,
-                np.array(boxes),
+                boxes_px,
                 np.array(class_ids),
                 np.array(confidences),
                 detector.class_names
