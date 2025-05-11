@@ -253,7 +253,14 @@ class VehicleTracker:
                         print(f"[DEBUG] Frame captured: {frame.shape}")
                         if self.sign_detector:
                             signs = self.sign_detector.detect(frame)
-                            print(f"[DEBUG] Detections: {signs}")
+                            # Shorten or remove base64 image in debug output
+                            debug_signs = []
+                            for s in signs:
+                                s_copy = dict(s)
+                                if 'image' in s_copy:
+                                    s_copy['image'] = s_copy['image'][:32] + '...' if s_copy['image'] else ''
+                                debug_signs.append(s_copy)
+                            print(f"[DEBUG] Detections: {debug_signs}")
                             if signs:
                                 data.update({"signs": signs})
                         last_camera = current_time
