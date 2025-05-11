@@ -81,11 +81,9 @@ def generate_video_stream():
             logger.error("Failed to capture frame from camera for video stream")
             time.sleep(0.1)
             continue
-        # Run detection and draw boxes
+        # Run detection and always draw boxes for the stream
         detections = detector.detect(frame)
-        if detector.draw_boxes and len(detections) > 0:
-            # Draw boxes on the frame
-            # Use the draw_boxes_on_image helper from sign_detection.py
+        if len(detections) > 0:
             # Extract boxes, class_ids, confidences
             boxes = [d['box'] for d in detections]
             class_ids = [detector.class_names.index(d['label']) for d in detections]
