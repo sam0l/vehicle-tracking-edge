@@ -82,7 +82,6 @@ def generate_video_stream():
             time.sleep(0.1)
             continue
 
-        # Get letterbox params for this frame
         imgsz = detector.imgsz
         if isinstance(imgsz, int):
             imgsz = (imgsz, imgsz)
@@ -94,20 +93,26 @@ def generate_video_stream():
         dh /= 2
         logger.info(f"Letterbox params: r={r}, dw={dw}, dh={dh}, frame shape={frame.shape}")
 
-        # Run detection
         detections = detector.detect(frame)
         logger.info(f'Detections this frame: {len(detections)}')
-        if len(detections) > 0:
-            boxes = []
-            for d in detections:
-                # For 640x360 letterboxed to 640x640, r=1, dw=0, dh=140
-                x1 = max(0, min(w-1, d['box'][0]))
-                y1 = max(0, min(h-1, d['box'][1] - dh))
-                x2 = max(0, min(w-1, d['box'][2]))
-                y2 = max(0, min(h-1, d['box'][3] - dh))
-                logger.info(f"Original detection box: {d['box']}")
-                logger.info(f"Transformed box: {[x1, y1, x2, y2]}")
+        boxes = []
+        for d in detections:
+            # Unletterbox
+            x1 = (d['box'][0] - dw) / r
+            y1 = (d['box'][1] - dh) / r
+            x2 = (d['box'][2] - dw) / r
+            y2 = (d['box'][3] - dh) / r
+            # Clip
+            x1 = int(max(0, min(w-1, x1)))
+            y1 = int(max(0, min(h-1, y1)))
+            x2 = int(max(0, min(w-1, x2)))
+            y2 = int(max(0, min(h-1, y2)))
+            logger.info(f"Original detection box: {d['box']}")
+            logger.info(f"Transformed box: {[x1, y1, x2, y2]}")
+            # Only draw if box is at least partially in frame
+            if x2 > 0 and x1 < w and y2 > 0 and y1 < h:
                 boxes.append([x1, y1, x2, y2])
+        if boxes:
             class_ids = [detector.class_names.index(d['label']) for d in detections]
             confidences = [d['confidence'] for d in detections]
             first_det = detections[0]
@@ -124,7 +129,6 @@ def generate_video_stream():
         else:
             logger.info('No detections to draw.')
 
-        # Encode as JPEG
         ret, jpeg = cv2.imencode('.jpg', frame)
         if not ret:
             logger.error("Failed to encode frame as JPEG for video stream")
