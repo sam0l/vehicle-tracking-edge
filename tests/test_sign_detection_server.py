@@ -92,6 +92,7 @@ def generate_video_stream():
         dw, dh = imgsz[1] - new_unpad[0], imgsz[0] - new_unpad[1]
         dw /= 2
         dh /= 2
+        logger.info(f"Letterbox params: r={r}, dw={dw}, dh={dh}, frame shape={frame.shape}")
 
         # Run detection
         detections = detector.detect(frame)
@@ -99,17 +100,16 @@ def generate_video_stream():
         if len(detections) > 0:
             boxes = []
             for d in detections:
-                # Unletterbox (corrected for 640x360 letterboxed to 640x640)
-                x1 = max(0, min(w, (d['box'][0] - dw) / r))
-                y1 = max(0, min(h, (d['box'][1] - dh) / r))
-                x2 = max(0, min(w, (d['box'][2] - dw) / r))
-                y2 = max(0, min(h, (d['box'][3] - dh) / r))
+                # For 640x360 letterboxed to 640x640, r=1, dw=0, dh=140
+                x1 = max(0, min(w-1, d['box'][0]))
+                y1 = max(0, min(h-1, d['box'][1] - dh))
+                x2 = max(0, min(w-1, d['box'][2]))
+                y2 = max(0, min(h-1, d['box'][3] - dh))
                 logger.info(f"Original detection box: {d['box']}")
                 logger.info(f"Transformed box: {[x1, y1, x2, y2]}")
                 boxes.append([x1, y1, x2, y2])
             class_ids = [detector.class_names.index(d['label']) for d in detections]
             confidences = [d['confidence'] for d in detections]
-            # Log only label, confidence, and box (not image)
             first_det = detections[0]
             logger.info(f"First detection: label={first_det['label']}, conf={first_det['confidence']:.2f}, box={first_det['box']}")
             logger.info(f'Drawing on image of shape: {frame.shape}')
