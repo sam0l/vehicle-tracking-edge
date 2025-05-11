@@ -81,23 +81,34 @@ def generate_video_stream():
             logger.error("Failed to capture frame from camera for video stream")
             time.sleep(0.1)
             continue
-        # Letterbox the frame for detection
-        imgsz = detector.imgsz
-        if isinstance(imgsz, int):
-            imgsz = (imgsz, imgsz)
-        # Preprocess returns (img, r, (dw, dh)), img is NCHW float32
+
+        # Preprocess for detection (letterbox)
         img, r, (dw, dh) = detector.preprocess(frame)
         # Convert back to HWC uint8 for drawing
         img_for_model = img[0].transpose(1, 2, 0)
         img_for_model = (img_for_model * 255).astype(np.uint8)
         img_for_model = cv2.cvtColor(img_for_model, cv2.COLOR_RGB2BGR)
-        # Run detection on the original frame (to use the same pipeline)
+
+        # Run detection on the original frame (which will be letterboxed inside detect)
         detections = detector.detect(frame)
+        logger.info(f'Detections this frame: {len(detections)}')
         if len(detections) > 0:
             boxes = [d['box'] for d in detections]
             class_ids = [detector.class_names.index(d['label']) for d in detections]
             confidences = [d['confidence'] for d in detections]
-            img_for_model = draw_boxes_on_image(img_for_model, np.array(boxes), np.array(class_ids), np.array(confidences), detector.class_names)
+            logger.info(f'First detection: {detections[0]}')
+            logger.info(f'Drawing on image of shape: {img_for_model.shape}')
+            logger.info(f'Boxes: {boxes}')
+            img_for_model = draw_boxes_on_image(
+                img_for_model,
+                np.array(boxes),
+                np.array(class_ids),
+                np.array(confidences),
+                detector.class_names
+            )
+        else:
+            logger.info('No detections to draw.')
+
         # Encode as JPEG
         ret, jpeg = cv2.imencode('.jpg', img_for_model)
         if not ret:
