@@ -44,6 +44,8 @@ class GPSTester:
                 self.port = gps_config.get('port', "/dev/ttyUSB3")
                 self.baudrate = gps_config.get('baudrate', 115200)
                 self.timeout = gps_config.get('timeout', 1.0)
+                self.power_delay = gps_config.get('power_delay', 5)
+                self.agps_delay = gps_config.get('agps_delay', 5)
                 logger.info(f"Loaded config: GPS port={self.port}, baudrate={self.baudrate}")
         except Exception as e:
             logger.error(f"Error loading config: {e}")
@@ -51,6 +53,8 @@ class GPSTester:
             self.port = "/dev/ttyUSB3"
             self.baudrate = 115200
             self.timeout = 1.0
+            self.power_delay = 5
+            self.agps_delay = 5
         
         # Create GPS instance
         self.gps = None
@@ -63,7 +67,9 @@ class GPSTester:
             self.gps = GPS(
                 port=self.port,
                 baudrate=self.baudrate,
-                timeout=self.timeout
+                timeout=self.timeout,
+                power_delay=self.power_delay,
+                agps_delay=self.agps_delay
             )
             
             result = self.gps.initialize()

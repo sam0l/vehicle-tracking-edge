@@ -20,10 +20,16 @@ The unified test framework provides a consistent approach to testing each subsys
 
 ### Running All Tests
 
-To run all tests at once:
+To run all unified tests at once:
 
 ```bash
-python tests/unified/run_all_tests.py
+python tests/unified/run_all_tests.py # This script is removed, see Integration Test below
+```
+
+Use the new integration test:
+
+```bash
+python tests/integration_test.py [--duration DURATION] [--no-gui]
 ```
 
 ### Running Tests for Specific Subsystems
@@ -64,6 +70,21 @@ Each individual test script also supports specific command-line options. Use the
 ```bash
 python tests/unified/test_imu.py --help
 ```
+
+## Integration Test
+
+A new integration test script (`tests/integration_test.py`) has been added to test the interaction between major subsystems (GPS, IMU, Camera, Sign Detection, Backend Communication).
+
+```bash
+python tests/integration_test.py --duration 120 --net-delay 0.5 --net-fail 0.1
+```
+
+This test:
+- Initializes all major components.
+- Runs a loop simulating data gathering, processing, and sending.
+- Uses a mock backend server to receive data.
+- Allows simulating network latency and failure rates.
+- Provides a summary of system performance and potential errors.
 
 ## Legacy Test Scripts
 

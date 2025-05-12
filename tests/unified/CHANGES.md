@@ -21,9 +21,10 @@ tests/
 │   ├── test_gps.py                # GPS module tests
 │   ├── test_sim_monitor.py        # SIM card monitoring tests
 │   ├── test_camera_and_sign_detection.py  # Camera and sign detection tests
-│   ├── run_all_tests.py           # Main test runner script
+│   ├── run_all_tests.py           # Main test runner script (REMOVED)
 │   └── CHANGES.md                 # This document
 ├── README.md                      # Test documentation
+├── integration_test.py            # New integration test for all major subsystems
 ├── imu_test.py                    # Legacy IMU test (complete)
 ├── quick_imu_test.py              # Legacy quick IMU test
 ├── imu_calibration_test.py        # Legacy IMU calibration
@@ -70,10 +71,17 @@ tests/
 
 ### 6. Main Test Runner
 
-- **Centralized Control**: Single script to run all tests
-- **Selective Testing**: Can run specific subsystem tests
+- **Centralized Control**: Single script to run all tests (REMOVED - replaced by integration_test.py)
+- **Selective Testing**: Can run specific subsystem tests (Individual unified tests still support this)
 - **Consistent Reporting**: Unified reporting format for all tests
 - **Comprehensive Logging**: Detailed logs of all test activities
+
+## New Integration Test (`tests/integration_test.py`)
+
+- **End-to-End Flow**: Tests data flow from sensors through processing to (mocked) backend.
+- **Subsystem Interaction**: Verifies that GPS, IMU, Camera, and Sign Detection work together.
+- **Simulated LTE & Backend**: Includes a mock HTTP server to simulate backend communication and allows simulating network latency and packet drops.
+- **Stability & Robustness**: Designed for longer runs to test system stability under varying (simulated) network conditions.
 
 ## Backwards Compatibility
 

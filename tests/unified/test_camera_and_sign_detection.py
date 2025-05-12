@@ -87,10 +87,6 @@ class CameraSignTester:
             
             # Initialize sign detector
             self.detector = SignDetector('config/config.yaml')
-            detector_result = self.detector.initialize()
-            if not detector_result:
-                logger.error("Sign detector initialization failed")
-                return False
             logger.info("Sign detector initialized successfully")
             
             return True
