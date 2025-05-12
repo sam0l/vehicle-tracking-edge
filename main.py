@@ -245,10 +245,8 @@ class VehicleTracker:
                         lon = gps_data.get("longitude", 0.0)
                         spd = gps_data.get("speed", 0.0)
                         
-                        # Only send detections with valid GPS data
-                        if not (gps_data.get("latitude") and gps_data.get("longitude")):
-                            self.logger.warning("Skipping detections without valid GPS data")
-                            continue
+                        # MODIFIED: Allow detections without valid GPS data for indoor testing
+                        # (removed the GPS validation check)
                             
                         image_base64 = None
                         if self.config['yolo']['send_images'] and frame is not None:
@@ -264,7 +262,8 @@ class VehicleTracker:
                                 "sign_type": sign["label"],
                                 "confidence": sign["confidence"],
                                 "connection_status": self.check_connectivity(),
-                                "update_type": "detection"  # Flag this as detection for backend
+                                "update_type": "detection",  # Flag this as detection for backend
+                                "indoor_test": not (gps_data.get("latitude") and gps_data.get("longitude"))  # Flag if this is indoor testing
                             }
                             
                             # Add additional GPS data if available
