@@ -97,18 +97,35 @@ def clear_log_file(log_file):
 def clear_detections(backend_url):
     """Clear the latest detections from the backend database."""
     try:
-        # First confirm we can reach the backend
-        health_check_url = f"{backend_url}/health"
-        try:
-            response = requests.get(health_check_url, timeout=5)
-            if response.status_code != 200:
-                logger.error(f"Backend health check failed with status {response.status_code}")
-                return False
-        except requests.RequestException as e:
-            logger.error(f"Cannot connect to backend at {backend_url}: {e}")
+        # Try multiple possible health check endpoints
+        health_endpoints = [
+            "/health",           # Root health endpoint
+            "/api/health",       # API health endpoint
+            "/"                  # Root endpoint (often returns 200 OK)
+        ]
+        
+        backend_reachable = False
+        
+        # Try each endpoint until we find one that works
+        for endpoint in health_endpoints:
+            health_check_url = f"{backend_url}{endpoint}"
+            try:
+                logger.info(f"Trying health check at {health_check_url}")
+                response = requests.get(health_check_url, timeout=5)
+                if response.status_code == 200:
+                    logger.info(f"Health check succeeded at {health_check_url}")
+                    backend_reachable = True
+                    break
+                else:
+                    logger.warning(f"Health check at {health_check_url} returned status {response.status_code}")
+            except requests.RequestException as e:
+                logger.warning(f"Health check at {health_check_url} failed: {e}")
+        
+        if not backend_reachable:
+            logger.error(f"Cannot connect to backend at {backend_url} using any known health endpoints")
             return False
         
-        # Use the clear_detections endpoint (we need to add this to the backend)
+        # Use the clear_detections endpoint
         clear_url = f"{backend_url}/api/clear_detections"
         
         logger.info(f"Attempting to clear detections from {clear_url}")
