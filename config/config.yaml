@@ -9,6 +9,7 @@ yolo:
   imgsz: 640
   iou_threshold: 0.45
   send_images: false
+  allow_detections_without_gps: true  # Allow detections to be sent even when GPS is unavailable
   class_names:
     - Green Light
     - Red Light

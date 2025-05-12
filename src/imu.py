@@ -247,19 +247,55 @@ class IMU:
             gyro_x = to_signed((data[8] << 8) | data[9]) * self.gyro_scale
             gyro_y = to_signed((data[10] << 8) | data[11]) * self.gyro_scale
             gyro_z = to_signed((data[12] << 8) | data[13]) * self.gyro_scale
-            # --- Speed estimation (simple integration, only when GPS is not available) ---
+            
+            # --- Improved Speed estimation (more reliable without GPS) ---
             now = time.time()
             dt = now - (self.last_update_time or now)
-            # Only integrate if GPS is not recent
-            if not (self.last_gps_time and (now - self.last_gps_time) < 5):
-                # Use horizontal acceleration (ignore gravity, assume flat)
-                acc_horiz = math.sqrt(accel_x**2 + accel_y**2)
-                self.current_speed += acc_horiz * dt
-                self.current_speed = max(0.0, self.current_speed)  # No negative speed
-                # Update heading from gyro_z (yaw rate, deg/s)
+            
+            # Use a more robust method to calculate absolute speed
+            # Only integrate if GPS is not recent (>5s old)
+            is_gps_recent = self.last_gps_time and (now - self.last_gps_time) < 5
+            
+            if not is_gps_recent:
+                # Calculate total horizontal acceleration (ignore gravity component)
+                # For a properly aligned IMU, this would use just accel_x and accel_y
+                # But we'll use all components to be robust to orientation issues
+                
+                # First calculate the gravity vector magnitude
+                total_accel_magnitude = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+                
+                # Assuming 1g is approximately 9.81 m/s², any magnitude above this
+                # likely represents the vehicle's motion
+                motion_accel = max(0, total_accel_magnitude - 1.0)  # Subtract 1g (approximate)
+                
+                # Apply a smoothing filter to reduce noise in the acceleration measurement
+                # Using a simple low-pass filter with alpha=0.3
+                alpha = 0.3
+                self.filtered_accel = motion_accel if not hasattr(self, 'filtered_accel') else \
+                                     alpha * motion_accel + (1 - alpha) * self.filtered_accel
+                
+                # Detect if vehicle is likely stopped (very low acceleration over time)
+                if self.filtered_accel < 0.05 and self.current_speed < 0.5:
+                    # Vehicle is probably stopped, slowly reduce speed to zero
+                    self.current_speed = max(0, self.current_speed - 0.1 * dt)
+                else:
+                    # Integrate acceleration to update speed, with dampening factor to prevent drift
+                    self.current_speed += self.filtered_accel * dt
+                    
+                    # Apply speed decay to simulate friction and prevent unlimited speed growth
+                    # Speed naturally decreases about 5% per second if no acceleration
+                    self.current_speed *= (1.0 - 0.05 * dt)
+                
+                # Limit maximum speed to a reasonable value when no GPS data is available
+                # Max speed of 120 km/h (33.3 m/s) without GPS validation seems reasonable
+                self.current_speed = min(self.current_speed, 33.3)
+                
+                # Update heading from gyro_z (yaw rate, deg/s) for dead reckoning
                 self.current_heading += gyro_z * dt
                 self.current_heading = self.current_heading % 360
+            
             self.last_update_time = now
+            
             return {
                 "accel_x": accel_x,  # g
                 "accel_y": accel_y,

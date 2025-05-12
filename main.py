@@ -152,14 +152,17 @@ class VehicleTracker:
             gps_speed = gps_data['speed']
             self.last_speed_update = current_time
             
-            if self.use_imu_speed and imu_data and 'speed' in imu_data:
-                # Combine GPS and IMU speeds using weighted average
+            if imu_data and 'speed' in imu_data:
+                # We have both GPS and IMU speed, combine them using weighted average
                 imu_speed = imu_data['speed']
                 self.current_speed = (self.speed_alpha * gps_speed) + ((1 - self.speed_alpha) * imu_speed)
+                # Enable IMU speed for future calculations
+                self.use_imu_speed = True
                 self.logger.debug(f"Speed calculation: GPS={gps_speed:.2f}, IMU={imu_speed:.2f}, Combined={self.current_speed:.2f}")
             else:
                 # Just use GPS speed
                 self.current_speed = gps_speed
+                self.logger.debug(f"Speed calculation: using GPS speed only: {gps_speed:.2f}")
                 
             # Update IMU with latest GPS data for better dead reckoning
             if self.imu and gps_data:
@@ -168,12 +171,21 @@ class VehicleTracker:
             return self.current_speed
             
         # If GPS speed is not available but IMU speed is, use IMU
-        elif imu_data and 'speed' in imu_data and current_time - self.last_speed_update < self.max_speed_age:
-            self.use_imu_speed = True
-            self.current_speed = imu_data['speed']
-            return self.current_speed
+        elif imu_data and 'speed' in imu_data:
+            # Check if IMU speed is still valid (not too old)
+            if current_time - self.last_speed_update < self.max_speed_age:
+                self.use_imu_speed = True
+                self.current_speed = imu_data['speed']
+                self.logger.debug(f"Speed calculation: using IMU speed: {self.current_speed:.2f}")
+                return self.current_speed
+            else:
+                # IMU speed data is too old, but still better than nothing
+                self.logger.warning(f"Using outdated IMU speed data ({current_time - self.last_speed_update:.1f}s old)")
+                self.current_speed = imu_data['speed']
+                return self.current_speed
             
         # If neither is available, return the last known speed
+        self.logger.debug(f"Speed calculation: no new data, using last speed: {self.current_speed:.2f}")
         return self.current_speed
 
     def send_data(self, data, frame=None):
@@ -240,13 +252,35 @@ class VehicleTracker:
 
                     # Send detection data only when signs are detected
                     if send_detection and self.sign_detector:
-                        gps_data = data.get("gps") if data.get("gps") else {}
-                        lat = gps_data.get("latitude", 0.0)
-                        lon = gps_data.get("longitude", 0.0)
-                        spd = gps_data.get("speed", 0.0)
+                        # Get current speed from IMU if GPS is not available
+                        current_speed = 0.0
+                        has_valid_gps = False
                         
-                        # MODIFIED: Allow detections without valid GPS data for indoor testing
-                        # (removed the GPS validation check)
+                        # Check if we have GPS data
+                        if data.get("gps"):
+                            gps_data = data["gps"]
+                            lat = gps_data.get("latitude", 0.0)
+                            lon = gps_data.get("longitude", 0.0)
+                            spd = gps_data.get("speed", 0.0)
+                            has_valid_gps = (lat != 0.0 and lon != 0.0)
+                        else:
+                            # No GPS data, use default values
+                            gps_data = {}
+                            lat = 0.0
+                            lon = 0.0
+                            
+                            # Try to get speed from IMU
+                            if data.get("imu") and "speed" in data["imu"]:
+                                spd = data["imu"]["speed"]
+                                self.logger.info(f"Using IMU speed ({spd:.2f} m/s) for detection without GPS")
+                            else:
+                                spd = 0.0
+                        
+                        # Check if we should skip detections without GPS based on config
+                        allow_without_gps = self.config['yolo'].get('allow_detections_without_gps', False)
+                        if not has_valid_gps and not allow_without_gps:
+                            self.logger.warning("Skipping detections without valid GPS data (allow_detections_without_gps is False)")
+                            continue
                             
                         image_base64 = None
                         if self.config['yolo']['send_images'] and frame is not None:
@@ -263,14 +297,14 @@ class VehicleTracker:
                                 "confidence": sign["confidence"],
                                 "connection_status": self.check_connectivity(),
                                 "update_type": "detection",  # Flag this as detection for backend
-                                "indoor_test": not (gps_data.get("latitude") and gps_data.get("longitude"))  # Flag if this is indoor testing
+                                "indoor_test": not has_valid_gps  # Flag if this is indoor testing without GPS
                             }
                             
                             # Add additional GPS data if available
-                            if "satellites" in data["gps"]:
-                                detection_data["satellites"] = data["gps"]["satellites"]
-                            if "altitude" in data["gps"]:
-                                detection_data["altitude"] = data["gps"]["altitude"]
+                            if "satellites" in gps_data:
+                                detection_data["satellites"] = gps_data["satellites"]
+                            if "altitude" in gps_data:
+                                detection_data["altitude"] = gps_data["altitude"]
                                 
                             if image_base64:
                                 detection_data["image"] = image_base64
@@ -450,6 +484,9 @@ class VehicleTracker:
                     # Update GPS data with calculated speed
                     if "gps" in data and speed is not None:
                         data["gps"]["speed"] = speed
+                    # Make sure IMU speed is also available without GPS
+                    elif "imu" in data and speed is not None:
+                        data["imu"]["speed"] = speed
 
                 # Camera data and sign detection
                 if self.camera_initialized and current_time - last_camera >= self.config['logging']['interval']['camera']:
@@ -480,15 +517,16 @@ class VehicleTracker:
                 if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
                     should_send = True
                     
-                # Also send if we have sign detections
-                if data.get("signs"):
+                # Also send if we have sign detections (regardless of GPS when allow_detections_without_gps is true)
+                if data.get("signs") and (self.config['yolo'].get('allow_detections_without_gps', False) or 
+                                         (data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"))):
                     should_send = True
                 
                 if should_send:
                     if not self.send_data(data, frame if frame is not None else None):
                         self.log_offline(data)
                 else:
-                    self.logger.debug("No valid GPS or detection data to send")
+                    self.logger.debug("No valid data to send")
 
                 # Try to send any offline data
                 self.send_offline_data()
