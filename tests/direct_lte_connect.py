@@ -11,6 +11,7 @@ import sys
 import subprocess
 import argparse
 import logging
+import glob
 
 # Set up logging
 logging.basicConfig(
@@ -32,7 +33,91 @@ def parse_args():
     parser.add_argument("--timeout", "-t", type=int, default=60, help="Connection timeout in seconds")
     parser.add_argument("--debug", "-d", action="store_true", help="Enable debug logging")
     parser.add_argument("--auto", action="store_true", help="Automatic mode without prompts")
+    parser.add_argument("--force", "-f", action="store_true", help="Force connection even if PPP exists")
     return parser.parse_args()
+
+def check_for_ppp():
+    """Check if PPP is already running and using the modem."""
+    try:
+        # Check if ppp0 interface exists
+        ifconfig = subprocess.run(["ifconfig", "ppp0"], 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE)
+        
+        if ifconfig.returncode == 0:
+            logger.warning("PPP interface already exists! Another connection might be active.")
+            return True
+            
+        # Check for running pppd processes
+        ps_output = subprocess.check_output(["ps", "aux"]).decode()
+        if "pppd" in ps_output and "ttyUSB" in ps_output:
+            logger.warning("PPP daemon is already running!")
+            return True
+            
+        return False
+    except Exception as e:
+        logger.error(f"Error checking PPP status: {e}")
+        return False
+
+def stop_ppp_service():
+    """Stop any running PPP service."""
+    try:
+        logger.info("Stopping any running LTE connection services...")
+        subprocess.run(["sudo", "systemctl", "stop", "lte-connection.service"], 
+                     stdout=subprocess.PIPE, 
+                     stderr=subprocess.PIPE)
+        time.sleep(2)  # Wait for service to properly stop
+        
+        # Kill any stray pppd processes
+        subprocess.run(["sudo", "killall", "pppd"], 
+                     stdout=subprocess.PIPE, 
+                     stderr=subprocess.PIPE)
+        time.sleep(1)
+        
+        logger.info("All PPP services stopped")
+        return True
+    except Exception as e:
+        logger.error(f"Error stopping PPP services: {e}")
+        return False
+
+def find_available_modem():
+    """Find an available LTE modem on the system."""
+    # Try detecting modem from common patterns
+    logger.info("Scanning for available modems...")
+    modem_patterns = [
+        "/dev/ttyUSB*",
+        "/dev/ttyACM*",
+        "/dev/ttyHS*"
+    ]
+    
+    available_ports = []
+    for pattern in modem_patterns:
+        available_ports.extend(glob.glob(pattern))
+    
+    if not available_ports:
+        logger.error("No potential modem devices found!")
+        return None
+    
+    logger.info(f"Found potential modem devices: {available_ports}")
+    
+    # Try to open each port and test with AT command
+    for port in available_ports:
+        logger.info(f"Testing port {port}...")
+        try:
+            ser = serial.Serial(port, DEFAULT_BAUDRATE, timeout=1)
+            ser.write(b"AT\r")
+            time.sleep(1)
+            response = ser.read(ser.in_waiting).decode(errors='ignore')
+            ser.close()
+            
+            if "OK" in response:
+                logger.info(f"Found working modem at {port}!")
+                return port
+        except Exception as e:
+            logger.debug(f"Port {port} test failed: {e}")
+    
+    logger.error("No responsive modem found!")
+    return None
 
 def send_command(ser, command, wait=1, timeout=10):
     """Send AT command to modem and return response."""
@@ -119,38 +204,43 @@ def start_pppd(port, baudrate):
     try:
         logger.info("Starting pppd...")
         
-        # Prepare PPP command
-        ppp_cmd = [
-            "sudo", "pppd", 
-            port, str(baudrate),
-            "noauth", "defaultroute", "usepeerdns", "noipdefault",
-            "novj", "novjccomp", "noccp", "nocrtscts",
-            "local", "lock"
-        ]
+        # Create a simple script file with PPP options
+        script_content = f"""#!/bin/sh
+# Direct PPP connection script
+exec /usr/sbin/pppd {port} {baudrate} noauth defaultroute usepeerdns \\
+  noipdefault novj novjccomp noccp nocrtscts local lock \\
+  dump debug
+"""
+        script_path = "/tmp/direct_ppp_connect.sh"
+        with open(script_path, "w") as f:
+            f.write(script_content)
         
-        logger.info(f"PPP command: {' '.join(ppp_cmd)}")
+        os.chmod(script_path, 0o755)
         
-        # Start pppd process
+        # Start pppd via the script
+        logger.info(f"Running PPP script: {script_path}")
         process = subprocess.Popen(
-            ppp_cmd,
+            ["sudo", script_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
         
-        # Wait a bit for pppd to initialize
-        time.sleep(5)
+        # Wait for PPP to initialize
+        logger.info("Waiting for PPP interface...")
+        max_wait = 10  # seconds
+        for i in range(max_wait):
+            check_ppp = subprocess.run(["ifconfig", "ppp0"], 
+                                     stdout=subprocess.PIPE, 
+                                     stderr=subprocess.PIPE)
+            if check_ppp.returncode == 0:
+                logger.info("PPP interface established successfully!")
+                return True
+            time.sleep(1)
+            logger.info(f"Waiting for PPP ({i+1}/{max_wait})")
         
-        # Check if ppp0 interface exists
-        check_ppp = subprocess.run(["ifconfig", "ppp0"], 
-                                  stdout=subprocess.PIPE, 
-                                  stderr=subprocess.PIPE)
-        
-        if check_ppp.returncode == 0:
-            logger.info("PPP interface established successfully!")
-            return True
-        else:
-            logger.error("PPP interface not established")
-            return False
+        logger.error("PPP interface not established after waiting")
+        logger.info("Check pppd logs with: dmesg | grep ppp")
+        return False
             
     except Exception as e:
         logger.error(f"Error starting pppd: {e}")
@@ -168,19 +258,61 @@ def main():
         sys.exit(1)
     
     logger.info(f"=== Direct LTE Connect ===")
-    logger.info(f"Using port: {args.port}, baudrate: {args.baudrate}, APN: {args.apn}")
+    
+    # Check for existing PPP connections
+    if check_for_ppp() and not args.force:
+        logger.warning("PPP connection already exists")
+        user_response = input("Stop existing PPP connections? (y/n): ")
+        if user_response.lower() == 'y':
+            stop_ppp_service()
+        else:
+            logger.error("Cannot proceed with active PPP connection")
+            return False
+    
+    # Find or use specified modem port
+    port = args.port
+    if port == DEFAULT_PORT:
+        # Check if the default port exists, if not try to find another
+        if not os.path.exists(port):
+            logger.warning(f"Default port {port} not found")
+            detected_port = find_available_modem()
+            if detected_port:
+                port = detected_port
+            else:
+                logger.error("No modem port found. Exiting.")
+                return False
+    
+    logger.info(f"Using port: {port}, baudrate: {args.baudrate}, APN: {args.apn}")
+    
+    # Try to release modem if it's locked
+    subprocess.run(["sudo", "fuser", "-k", port], 
+                 stdout=subprocess.PIPE, 
+                 stderr=subprocess.PIPE)
+    time.sleep(1)
     
     try:
         # Open serial port
-        logger.info(f"Opening serial port {args.port}...")
-        ser = serial.Serial(args.port, args.baudrate, timeout=1)
+        logger.info(f"Opening serial port {port}...")
+        ser = serial.Serial(port, args.baudrate, timeout=1)
         
         # Basic AT test
         response = send_command(ser, "AT")
         if "OK" not in response:
             logger.error("Modem not responding to AT commands")
-            ser.close()
-            return False
+            logger.info("Trying to reset modem...")
+            
+            # Try a hardware reset sequence
+            ser.setDTR(False)  # Drop DTR
+            time.sleep(0.5)
+            ser.setDTR(True)   # Raise DTR
+            time.sleep(0.5)
+            
+            # Try again
+            response = send_command(ser, "AT")
+            if "OK" not in response:
+                logger.error("Modem still not responding after reset")
+                ser.close()
+                return False
         
         # Initialize modem
         logger.info("Initializing modem...")
@@ -200,13 +332,17 @@ def main():
             
             # Close serial port to release it for pppd
             ser.close()
+            logger.info("Serial port closed to prepare for PPP")
             
             # Start pppd
-            if start_pppd(args.port, args.baudrate):
+            if start_pppd(port, args.baudrate):
                 logger.info("LTE connection established successfully!")
                 
                 # Display interface details
-                subprocess.run(["ifconfig", "ppp0"])
+                ifconfig_result = subprocess.run(["ifconfig", "ppp0"], 
+                                              stdout=subprocess.PIPE, 
+                                              stderr=subprocess.PIPE)
+                logger.info(f"PPP interface details:\n{ifconfig_result.stdout.decode()}")
                 
                 # If not auto mode, wait for user to terminate
                 if not args.auto:
@@ -223,6 +359,9 @@ def main():
     
     except KeyboardInterrupt:
         logger.info("Operation interrupted by user")
+    except serial.SerialException as e:
+        logger.error(f"Serial port error: {e}")
+        logger.warning("The port might be in use by another process. Try stopping any PPP services first.")
     except Exception as e:
         logger.error(f"Error: {e}")
     
