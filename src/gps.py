@@ -1,90 +1,217 @@
 import serial
 import time
 import logging
+import random
 
 class GPS:
-    def __init__(self, port, baudrate, timeout, power_delay, agps_delay):
+    def __init__(self, port, baudrate, timeout, power_delay, agps_delay, fix_check_interval=5, max_buffer_size=8192):
+        """
+        Initialize the GPS module with improved parameters.
+        
+        Args:
+            port: Serial port to use
+            baudrate: Baud rate for serial communication
+            timeout: Serial timeout in seconds
+            power_delay: Delay after powering on GPS in seconds
+            agps_delay: Delay after enabling AGPS in seconds
+            fix_check_interval: How often to check for a GPS fix in seconds
+            max_buffer_size: Maximum buffer size for serial reads
+        """
         self.logger = logging.getLogger(__name__)
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
         self.power_delay = power_delay
         self.agps_delay = agps_delay
+        # Explicitly initialize serial to None
         self.serial = None
         self.has_fix = False
         self.last_fix_check = 0
-        self.fix_check_interval = 5  # Check for fix every 5 seconds
+        # Make fix check interval configurable
+        self.fix_check_interval = fix_check_interval
         self.satellites = 0
+        # Add maximum buffer size to prevent memory issues
+        self.max_buffer_size = max_buffer_size
+        # Track connection attempts
+        self.connection_attempts = 0
 
-    def read_response(self, timeout=5):
+    def read_response(self, timeout=5, return_all_lines=False):
+        """
+        Read response from the serial port with improved buffer management.
+        
+        Args:
+            timeout: Maximum time to wait for response in seconds
+            return_all_lines: Whether to return all lines or just the first meaningful line
+            
+        Returns:
+            String response or list of response lines when return_all_lines=True
+        """
         start_time = time.time()
         response = ""
+        all_lines = []
+        
         while time.time() - start_time < timeout:
-            if self.serial.in_waiting:
-                response += self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
+            if self.serial and self.serial.in_waiting:
+                # Limit read size for better memory management
+                bytes_to_read = min(self.serial.in_waiting, self.max_buffer_size)
+                chunk = self.serial.read(bytes_to_read).decode('utf-8', errors='ignore')
+                response += chunk
+                
+                # Process complete lines
                 if '\n' in response:
                     lines = response.split('\n')
+                    # Keep the last incomplete line in the buffer
+                    response = lines.pop()
+                    
                     for line in lines:
                         line = line.strip()
-                        if line and line != 'OK' and not line.startswith('AT+'):
-                            return line
+                        if line:
+                            all_lines.append(line)
+                            if not return_all_lines and line != 'OK' and not line.startswith('AT+'):
+                                self.logger.debug(f"Read response: {line}")
+                                return line
+            
+            # Non-blocking read with small delay
             time.sleep(0.01)
-        self.logger.debug(f"Raw response after {timeout}s: {response}")
-        return response.strip()
+        
+        # Add any remaining content to all_lines
+        if response.strip():
+            all_lines.append(response.strip())
+            
+        if return_all_lines:
+            self.logger.debug(f"Read all lines: {all_lines}")
+            return all_lines
+        
+        response_text = response.strip() if not all_lines else all_lines[0] 
+        self.logger.debug(f"Raw response after {timeout}s: {response_text}")
+        return response_text
 
     def wait_for_response(self, expected_response, timeout):
+        """
+        Wait for an expected response with improved handling.
+        
+        Args:
+            expected_response: The response string to wait for
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            Boolean indicating whether the expected response was received
+        """
         start_time = time.time()
         while time.time() - start_time < timeout:
-            response = self.read_response(timeout=1)
-            if expected_response in response:
-                self.logger.debug(f"Received expected response: {response}")
-                return True
-            self.logger.debug(f"Waiting for '{expected_response}', got: {response}")
+            # Get all response lines
+            response_lines = self.read_response(timeout=1, return_all_lines=True)
+            
+            if isinstance(response_lines, list):
+                for line in response_lines:
+                    if expected_response in line:
+                        self.logger.debug(f"Received expected response: {line}")
+                        return True
+                    self.logger.debug(f"Waiting for '{expected_response}', got: {line}")
+            else:
+                # Handle case where response_lines is a string
+                if expected_response in response_lines:
+                    self.logger.debug(f"Received expected response: {response_lines}")
+                    return True
+                self.logger.debug(f"Waiting for '{expected_response}', got: {response_lines}")
+                
         self.logger.warning(f"Timeout waiting for '{expected_response}' after {timeout}s")
         return False
 
     def send_command(self, command, expected_response=None, timeout=5, retry=0):
-        """Send AT command with optional retry"""
-        full_response = ""
+        """
+        Send AT command with exponential backoff for retries.
+        
+        Args:
+            command: AT command to send
+            expected_response: Expected response string
+            timeout: Maximum time to wait for response
+            retry: Number of retries if command fails
+            
+        Returns:
+            Tuple of (success, response) where success is a boolean and response is the received text
+        """
+        full_response = []
         success = False
         
         for attempt in range(retry + 1):
             try:
                 self.logger.debug(f"Sending: {command}{' (retry ' + str(attempt) + ')' if attempt > 0 else ''}")
-                self.serial.write((command + '\r\n').encode('utf-8'))
+                if self.serial:
+                    self.serial.write((command + '\r\n').encode('utf-8'))
+                else:
+                    self.logger.error("Serial connection not established")
+                    return False, []
                 
                 if not expected_response:
                     time.sleep(0.1)  # Brief delay for commands without expected response
-                    return True
+                    return True, []
                     
                 # Wait for expected response
                 start_time = time.time()
-                response = ""
+                response_lines = []
                 
                 while time.time() - start_time < timeout:
-                    if self.serial.in_waiting:
+                    if self.serial and self.serial.in_waiting:
                         chunk = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
-                        response += chunk
-                        full_response += chunk
                         
-                        if expected_response in response:
-                            self.logger.debug(f"Received: {response.strip()}")
-                            return True
+                        # Process lines
+                        lines = chunk.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if line:
+                                response_lines.append(line)
+                                full_response.append(line)
+                                
+                        # Check if any line contains the expected response
+                        if any(expected_response in line for line in response_lines):
+                            self.logger.debug(f"Received expected response in: {response_lines}")
+                            return True, response_lines
                     time.sleep(0.01)
                 
-                self.logger.debug(f"Timeout waiting for '{expected_response}', got: {response.strip()}")
+                self.logger.debug(f"Timeout waiting for '{expected_response}', got: {response_lines}")
                 
-                # If this is not the last attempt, wait before retrying
+                # Exponential backoff for retries
                 if attempt < retry:
-                    time.sleep(1)
+                    backoff_time = min(2 ** attempt + random.random(), 10)
+                    self.logger.debug(f"Retrying after {backoff_time:.2f}s")
+                    time.sleep(backoff_time)
             except Exception as e:
                 self.logger.error(f"Command: {command}, Error: {e}")
-                time.sleep(1)
+                # Exponential backoff for retries after errors
+                if attempt < retry:
+                    backoff_time = min(2 ** attempt + random.random(), 10)
+                    self.logger.debug(f"Retrying after error in {backoff_time:.2f}s")
+                    time.sleep(backoff_time)
                 
-        return False
+        return False, full_response
 
     def initialize(self):
+        """
+        Initialize the GPS module with improved reliability.
+        
+        Returns:
+            Boolean indicating initialization success
+        """
+        # Track connection attempts for exponential backoff
+        self.connection_attempts += 1
+        
         try:
+            # Close any existing connection first
+            if self.serial:
+                try:
+                    self.serial.close()
+                    self.logger.info("Closed existing GPS serial connection")
+                except:
+                    pass
+                self.serial = None
+            
+            # Exponential backoff if this is a retry
+            if self.connection_attempts > 1:
+                backoff_time = min(2 ** (self.connection_attempts - 1) + random.random(), 30)
+                self.logger.info(f"Retry attempt {self.connection_attempts}, waiting {backoff_time:.2f}s before reconnecting")
+                time.sleep(backoff_time)
+            
             self.serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
             self.logger.info("GPS serial port opened")
         except Exception as e:
@@ -97,7 +224,8 @@ class GPS:
         self.logger.debug(f"GNSS power check response: {response}")
         if "+CGNSSPWR: 1" not in response:
             # Power on GNSS
-            if not self.send_command("AT+CGNSSPWR=1", "+CGNSSPWR: READY!", timeout=30, retry=2):
+            success, power_response = self.send_command("AT+CGNSSPWR=1", "+CGNSSPWR: READY!", timeout=30, retry=2)
+            if not success:
                 self.logger.error("Failed to power on GNSS")
                 return False
             self.logger.info("GNSS powered on successfully")
@@ -111,12 +239,12 @@ class GPS:
         # From test results, we found CGNSSMODE is the correct command for this module
         self.logger.info("Configuring GNSS to use all satellite systems")
         try:
-            self.serial.write(b'AT+CGNSSMODE?\r\n')
-            response = self.read_response(timeout=2)
-            self.logger.debug(f"GNSS mode check response: {response}")
+            success, mode_check_response = self.send_command("AT+CGNSSMODE?", timeout=2) 
+            self.logger.debug(f"GNSS mode check response: {mode_check_response}")
             
             # Mode 3 typically means GPS+GLONASS+BEIDOU, which is good
-            if "+CGNSSMODE: 3" in response:
+            response_text = '\n'.join(mode_check_response) if isinstance(mode_check_response, list) else str(mode_check_response)
+            if "+CGNSSMODE: 3" in response_text:
                 self.logger.info("GNSS already configured to use multiple satellite systems (mode 3)")
             else:
                 self.logger.info("Setting GNSS mode to 3 (GPS+GLONASS+BEIDOU)")
@@ -124,17 +252,17 @@ class GPS:
         except Exception as e:
             self.logger.warning(f"Failed to configure GNSS mode: {e}, continuing with default mode")
         
-        # Enable AGPS directly without checking status first
+        # Enable AGPS with proper response handling
         self.logger.info("Enabling AGPS...")
-        self.serial.write(b'AT+CAGPS\r\n')
+        success, agps_response = self.send_command("AT+CAGPS", timeout=2, retry=1)
         
         # Wait for the specified AGPS delay before continuing
         self.logger.info(f"Waiting {self.agps_delay} seconds for AGPS to initialize...")
         time.sleep(self.agps_delay)
         
-        # Read any response but don't require success message
-        response = self.read_response(timeout=2)
-        if "+AGPS: success" in response:
+        # Check AGPS response
+        response_text = '\n'.join(agps_response) if isinstance(agps_response, list) else str(agps_response)
+        if "+AGPS: success" in response_text:
             self.logger.info("AGPS enabled successfully")
         else:
             self.logger.info("Continuing after AGPS command (success status unknown)")
@@ -142,11 +270,19 @@ class GPS:
         # Initial check for GPS fix - may not have fix yet
         self.check_gps_fix()
         
+        # Reset connection attempts counter on successful connection
+        self.connection_attempts = 0
+        
         self.logger.info("GPS initialized successfully")
         return True
 
     def check_gps_fix(self):
-        """Check if GPS has a fix by querying CGNSSINFO"""
+        """
+        Check if GPS has a fix by querying CGNSSINFO with improved handling.
+        
+        Returns:
+            Boolean indicating whether GPS has a fix
+        """
         current_time = time.time()
         
         # Skip if we checked recently
@@ -157,13 +293,26 @@ class GPS:
         
         try:
             self.logger.debug("Checking for GPS fix...")
-            self.serial.write(b'AT+CGNSSINFO\r\n')
-            response = self.read_response()
-            self.logger.debug(f"CGNSSINFO response: {response}")
+            success, response_lines = self.send_command("AT+CGNSSINFO", timeout=2)
+            
+            if not success or not response_lines:
+                self.logger.debug("No response when checking for GPS fix")
+                self.has_fix = False
+                return False
+                
+            # Convert list to string for logging/processing
+            response_text = '\n'.join(response_lines) if isinstance(response_lines, list) else str(response_lines)
+            self.logger.debug(f"CGNSSINFO response: {response_text}")
             
             # Look for CGNSSINFO response with non-empty lat/lon fields
-            if "+CGNSSINFO: " in response:
-                fields = response.split(': ')[1].split(',')
+            cgnssinfo_line = None
+            for line in response_lines if isinstance(response_lines, list) else [response_text]:
+                if "+CGNSSINFO: " in line:
+                    cgnssinfo_line = line
+                    break
+                    
+            if cgnssinfo_line:
+                fields = cgnssinfo_line.split(': ')[1].split(',')
                 
                 # Update satellites count if available
                 if len(fields) > 1 and fields[1]:
@@ -189,33 +338,53 @@ class GPS:
         return self.has_fix
 
     def get_data(self):
+        """
+        Get GPS data with improved reliability and raw response return.
+        
+        Returns:
+            Dictionary containing parsed GPS data and raw response
+        """
         try:
             # First check if we have a fix
             if not self.check_gps_fix():
                 self.logger.warning(f"No GPS fix yet, waiting for satellite acquisition (visible satellites: {self.satellites})")
                 return None
                 
-            self.serial.write(b'AT+CGNSSINFO\r\n')
-            response = self.read_response()
-            self.logger.debug(f"CGNSSINFO response: {response}")
+            success, response_lines = self.send_command("AT+CGNSSINFO", timeout=2)
+            
+            if not success or not response_lines:
+                self.logger.warning("Failed to get CGNSSINFO response")
+                self.has_fix = False
+                return None
+                
+            # Convert list to string for logging
+            response_text = '\n'.join(response_lines) if isinstance(response_lines, list) else str(response_lines)
+            self.logger.debug(f"CGNSSINFO response: {response_text}")
+            
+            # Find the CGNSSINFO line in the response
+            cgnssinfo_line = None
+            for line in response_lines if isinstance(response_lines, list) else [response_text]:
+                if "+CGNSSINFO: " in line:
+                    cgnssinfo_line = line
+                    break
+
+            if not cgnssinfo_line:
+                self.logger.warning(f"Invalid CGNSSINFO response: {response_text}")
+                self.has_fix = False
+                return None
 
             # Format observed in working diagnostic:
             # +CGNSSINFO: 3,17,,09,10,14.6198673,N,121.1038513,E,120525,112149.00,78.0,0.000,15.78,1.91,0.95,1.6
             # Position in array:           0  1  2  3  4  5          6  7          8  9      10        11   12    13+
             # Lat is field 5, lat dir is field 6, lon is field 7, lon dir is field 8, alt is field 11, speed is field 12
 
-            if "+CGNSSINFO: " not in response:
-                self.logger.warning(f"Invalid CGNSSINFO response: {response}")
-                self.has_fix = False
-                return None
-
             # Extract all fields from the response
-            fields = response.split(': ')[1].split(',')
+            fields = cgnssinfo_line.split(': ')[1].split(',')
             self.logger.debug(f"Parsed CGNSSINFO fields: {fields}")
             
             # Based on successful diagnostic, we need at least 9 fields for lat/lon
             if len(fields) < 9:
-                self.logger.warning(f"Incomplete CGNSSINFO response: {response}")
+                self.logger.warning(f"Incomplete CGNSSINFO response: {cgnssinfo_line}")
                 self.has_fix = False
                 return None
 
@@ -266,11 +435,13 @@ class GPS:
                 # Log successful GPS data retrieval
                 self.logger.info(f"GPS data: lat={latitude}, lon={longitude}, alt={altitude}, speed={speed}, satellites={self.satellites}")
                 
+                # Return both parsed data and raw response
                 result = {
                     "latitude": latitude,
                     "longitude": longitude,
                     "speed": speed,
-                    "satellites": self.satellites
+                    "satellites": self.satellites,
+                    "raw_response": response_text
                 }
                 
                 if altitude is not None:
@@ -289,6 +460,12 @@ class GPS:
             return None
 
     def close(self):
+        """Safely close the serial connection"""
         if self.serial:
-            self.serial.close()
-            self.logger.info("GPS serial port closed")
+            try:
+                self.serial.close()
+                self.logger.info("GPS serial port closed")
+            except Exception as e:
+                self.logger.error(f"Error closing GPS serial port: {e}")
+            finally:
+                self.serial = None

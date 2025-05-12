@@ -44,13 +44,13 @@ def send_at_command(ser, command, expected_response="OK", timeout=2, log_command
             ser.reset_input_buffer()
             
             # Send command with CR+LF
-            ser.write((command + "\r\n").encode())
-            time.sleep(0.1)
+        ser.write((command + "\r\n").encode())
+        time.sleep(0.1)
             
-            response = ""
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
+        response = ""
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
                 if ser.in_waiting:
                     chunk = ser.read(ser.in_waiting).decode(errors="ignore")
                     response += chunk
@@ -86,8 +86,8 @@ def get_full_response(ser, timeout=5):
     start_time = time.time()
     while time.time() - start_time < timeout:
         if ser.in_waiting:
-            response += ser.read(ser.in_waiting).decode(errors="ignore")
-        time.sleep(0.01)
+                response += ser.read(ser.in_waiting).decode(errors="ignore")
+            time.sleep(0.01)
     return response.strip()
 
 def parse_gnss_info(response):
@@ -560,7 +560,7 @@ def main():
                 time.sleep(POWER_DELAY)
             else:
                 debug_print(f"❌ Failed to power on GNSS: {response}")
-                return
+            return
         
         # Configure GNSS mode
         check_gnss_mode(ser)
