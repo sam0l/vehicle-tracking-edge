@@ -7,6 +7,8 @@ import csv
 from datetime import datetime
 import threading
 import pytz  # Added for timezone
+import subprocess # Added for running sensors command
+import re         # Added for parsing sensors output
 
 # Ensure src is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -58,6 +60,46 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
         return True
     except socket.error:
         return False
+
+# Helper: get system temperatures from 'sensors' command
+def get_system_temperatures():
+    temps = {}
+    try:
+        # Run the sensors command
+        result = subprocess.run(['sensors'], capture_output=True, text=True, check=True, timeout=5)
+        output = result.stdout
+        
+        # Regex to find temperature lines (e.g., "temp1: +43.5 C")
+        # It captures the thermal zone name (e.g., 'soc_thermal', 'gpu_thermal') and the temp value
+        # Adjusted regex to better capture the thermal zone identifier
+        pattern = re.compile(r"^([a-zA-Z0-9_]+)-virtual-[0-9]+\n(?:.+\n)*?temp1:\s+\+?([0-9.]+)\s*C", re.MULTILINE)
+        
+        matches = pattern.findall(output)
+        
+        for match in matches:
+            zone_name = match[0].replace('_thermal', '') # Simplify name (e.g., 'soc_thermal' -> 'soc')
+            temp_value = float(match[1])
+            temps[f'temp_{zone_name}'] = temp_value
+            
+        # Fallback for specific format if the general one fails
+        # Example: soc_thermal-virtual-0, temp1: +43.5 C
+        if not temps:
+             fallback_pattern = re.compile(r"^(\w+_thermal)-virtual-0\s*\nAdapter: Virtual device\s*\ntemp1:\s*\+([0-9.]+)\s*C", re.MULTILINE)
+             fallback_matches = fallback_pattern.findall(output)
+             for name, temp_str in fallback_matches:
+                 key = name.replace('_thermal','')
+                 temps[f'temp_{key}'] = float(temp_str)
+
+    except FileNotFoundError:
+        print("[WARN] 'sensors' command not found. Cannot read system temperatures.")
+    except subprocess.TimeoutExpired:
+        print("[WARN] 'sensors' command timed out.")
+    except subprocess.CalledProcessError as e:
+        print(f"[WARN] 'sensors' command failed: {e}")
+    except Exception as e:
+        print(f"[ERROR] Unexpected error reading system temperatures: {e}")
+        
+    return temps
 
 # Early exit flag
 early_exit = threading.Event()
@@ -148,6 +190,12 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
     up_counts = {k: 0 for k in subsystems}
     total_counts = {k: 0 for k in subsystems}
 
+    # Define expected system temperature keys (adjust based on your 'sensors' output)
+    system_temp_keys = [
+        'temp_soc', 'temp_gpu', 'temp_npu', 
+        'temp_littlecore', 'temp_bigcore0', 'temp_bigcore1', 'temp_center'
+    ]
+
     # Open both log files
     with open(log_file, "w", newline="") as main_log, open(temp_log_file, "w", newline="") as temp_log:
         main_writer = csv.writer(main_log)
@@ -155,7 +203,8 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
 
         # Write headers
         main_writer.writerow(["timestamp"] + subsystems + ["IMU_speed", "IMU_position"])
-        temp_writer.writerow(["timestamp", "temperature_celsius"])
+        # Add system temp keys to the temperature log header
+        temp_writer.writerow(["timestamp", "imu_temp_celsius"] + system_temp_keys)
 
         start_time = time.time()
         while (time.time() - start_time) < duration_seconds and not early_exit.is_set():
@@ -248,6 +297,9 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
             if internet_status == "WORKING":
                 up_counts["INTERNET"] += 1
 
+            # 5. System Temperatures
+            system_temps = get_system_temperatures()
+
             # Print summary line to console with status
             summary_line = (
                 f"GPS: {gps_status} | IMU: {imu_status} | DETECTION: {detection_status} | INTERNET: {internet_status} "
@@ -261,8 +313,21 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
             ])
 
             # Write to temperature log if temperature was read successfully
-            if imu_initialized and imu_temperature is not None: # Check initialization flag too
-                temp_writer.writerow([timestamp, imu_temperature])
+            if imu_initialized and imu_temperature is not None:
+                # Prepare data row for temperature log
+                temp_row = [timestamp, imu_temperature]
+                # Append system temps in the correct order, using None if key is missing
+                for key in system_temp_keys:
+                    temp_row.append(system_temps.get(key, None))
+                temp_writer.writerow(temp_row)
+            else:
+                 # Still log system temps even if IMU temp fails, but put None for IMU temp
+                temp_row = [timestamp, None] # Add None for imu_temp_celsius
+                for key in system_temp_keys:
+                    temp_row.append(system_temps.get(key, None))
+                # Only write if we actually got any system temps
+                if any(v is not None for v in temp_row[1:]): # Check if any temp value exists
+                    temp_writer.writerow(temp_row)
 
             time.sleep(1)
 
