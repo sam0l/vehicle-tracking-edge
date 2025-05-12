@@ -5,10 +5,10 @@ camera:
   fps: 30
 yolo:
   model_path: "models/yolov8n.onnx"
-  confidence_threshold: 0.7
-  imgsz: 640
-  iou_threshold: 0.5
-  send_images: true
+  confidence_threshold: 0.5
+  imgsz: 416
+  iou_threshold: 0.45
+  send_images: false
   class_names:
     - Green Light
     - Red Light
@@ -25,7 +25,7 @@ yolo:
     - Speed Limit 80
     - Speed Limit 90
     - Stop
-  intra_op_num_threads: 4
+  intra_op_num_threads: 8
   draw_boxes: true
 gps:
   port: "/dev/ttyUSB1"
@@ -71,8 +71,8 @@ logging:
   offline_file: "offline_data.json"
   interval:
     gps: 1
-    imu: 0.1
-    camera: 5
+    imu: 0.05
+    camera: 0.2  # Faster camera processing interval (5 frames per second)
 
 network:
   interface: ["ppp0", "wlan0"]  # List of interfaces to track (LTE and WiFi)
