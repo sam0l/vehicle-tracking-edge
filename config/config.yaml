@@ -6,7 +6,7 @@ camera:
 yolo:
   model_path: "models/yolov8n.onnx"
   confidence_threshold: 0.7
-  imgsz: 416
+  imgsz: 640
   iou_threshold: 0.45
   send_images: false
   class_names:
