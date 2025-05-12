@@ -6,6 +6,7 @@ import yaml
 import csv
 from datetime import datetime
 import threading
+import pytz  # Added for timezone
 
 # Ensure src is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -33,6 +34,9 @@ DEFAULT_DURATION = 12 * 60 * 60  # 12 hours in seconds
 test_cfg = config.get('test', {})
 duration_seconds = test_cfg.get('duration_seconds', DEFAULT_DURATION)
 
+# Define Singapore timezone
+sg_timezone = pytz.timezone('Asia/Singapore')
+
 # Helper: check internet connectivity
 def check_internet(host="8.8.8.8", port=53, timeout=3):
     try:
@@ -53,8 +57,10 @@ def input_listener():
             early_exit.set()
             break
 
-def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
+def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp_log_file="temperature_stress_log.csv"):
     print(f"[INFO] Starting stress test for {duration_seconds} seconds ({duration_seconds/3600:.2f} hours)")
+    print(f"[INFO] Logging subsystem status to: {log_file}")
+    print(f"[INFO] Logging temperature to: {temp_log_file}")
     print("[INFO] Press 'x' and Enter at any time to end the test early.")
     # Start input listener thread
     listener_thread = threading.Thread(target=input_listener, daemon=True)
@@ -90,12 +96,20 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
     up_counts = {k: 0 for k in subsystems}
     total_counts = {k: 0 for k in subsystems}
 
-    with open(log_file, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["timestamp"] + subsystems + ["IMU_speed", "IMU_position"])
+    # Open both log files
+    with open(log_file, "w", newline="") as main_log, open(temp_log_file, "w", newline="") as temp_log:
+        main_writer = csv.writer(main_log)
+        temp_writer = csv.writer(temp_log)
+
+        # Write headers
+        main_writer.writerow(["timestamp"] + subsystems + ["IMU_speed", "IMU_position"])
+        temp_writer.writerow(["timestamp", "temperature_celsius"])
+
         start_time = time.time()
         while (time.time() - start_time) < duration_seconds and not early_exit.is_set():
-            timestamp = datetime.now().isoformat()
+            # Use timezone-aware timestamp
+            timestamp = datetime.now(sg_timezone).isoformat()
+
             # 1. GPS
             gps_status = "NOT WORKING"
             gps_data = None
@@ -114,13 +128,22 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
             imu_status = "NOT WORKING"
             imu_speed = None
             imu_position = None
+            imu_temperature = None
             try:
                 imu_data = imu.read_data()
                 imu_speed = imu.get_speed()
                 imu_position = imu.get_position()
+                try:
+                    imu_temperature = imu.get_temperature()
+                except AttributeError:
+                    imu_temperature = None
+                except Exception as temp_e:
+                    print(f"[WARN] Could not read IMU temperature: {temp_e}")
+                    imu_temperature = None
                 if imu_speed is not None and imu_position is not None:
                     imu_status = "WORKING"
-            except Exception:
+            except Exception as imu_e:
+                print(f"[ERROR] Error reading IMU data: {imu_e}")
                 imu_status = "NOT WORKING"
             total_counts["IMU"] += 1
             if imu_status == "WORKING":
@@ -152,9 +175,15 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
             )
             print(summary_line)
 
-            writer.writerow([
+            # Write to main log
+            main_writer.writerow([
                 timestamp, gps_status, imu_status, detection_status, internet_status, imu_speed, imu_position
             ])
+
+            # Write to temperature log if temperature was read
+            if imu_temperature is not None:
+                temp_writer.writerow([timestamp, imu_temperature])
+
             time.sleep(1)
 
     # Print uptime stats

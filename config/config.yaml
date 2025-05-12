@@ -3,6 +3,11 @@ camera:
   width: 640
   height: 360
   fps: 30
+
+# General system settings
+general:
+  timezone: 'Asia/Singapore' # Default timezone for logging (e.g., 'UTC', 'America/New_York')
+
 yolo:
   model_path: "models/yolov8n.onnx"
   confidence_threshold: 0.7

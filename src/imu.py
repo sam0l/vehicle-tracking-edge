@@ -965,3 +965,50 @@ class IMU:
 
         self.logger.error("IMU initialization failed after maximum attempts")
         return False
+
+    def get_temperature(self):
+        """Reads and returns the current temperature from the IMU in Celsius."""
+        current_time = time.time()
+        # Perform address check/switch if necessary (similar to read_data)
+        if current_time - self.last_address_check >= self.address_check_interval:
+            if not self._verify_address():
+                if not self._switch_to_valid_address():
+                    self.logger.error("Cannot read IMU temperature: no valid IMU address found or configured.")
+                    return None
+            self.last_address_check = current_time
+
+        if not self.address:
+            self.logger.error("Cannot read IMU temperature: IMU address not set.")
+            return None
+        
+        try:
+            # Read temperature registers (TEMP_OUT_H and TEMP_OUT_L)
+            # These are at 0x41 and 0x42
+            temp_h = self.bus.read_byte_data(self.address, self.REG_TEMP_OUT_H)
+            temp_l = self.bus.read_byte_data(self.address, self.REG_TEMP_OUT_L)
+            raw_temp = (temp_h << 8) | temp_l
+            
+            # Convert to signed 16-bit value
+            signed_raw_temp = self._to_signed_int16(raw_temp)
+            
+            # Convert to Celsius using the formula from datasheet/existing code
+            # Temperature in Degrees Centigrade = (TEMP_OUT / TEMP_SENSITIVITY) + TEMP_OFFSET
+            temperature_celsius = signed_raw_temp / self.TEMP_SENSITIVITY + self.TEMP_OFFSET
+            
+            return temperature_celsius
+        except Exception as e:
+            self.logger.error(f"Failed to read temperature from IMU address 0x{self.address:02x}: {e}")
+            # Attempt to switch address if read fails, then retry once.
+            if self._switch_to_valid_address():
+                self.logger.info(f"Retrying temperature read on new address 0x{self.address:02x}")
+                try:
+                    temp_h = self.bus.read_byte_data(self.address, self.REG_TEMP_OUT_H)
+                    temp_l = self.bus.read_byte_data(self.address, self.REG_TEMP_OUT_L)
+                    raw_temp = (temp_h << 8) | temp_l
+                    signed_raw_temp = self._to_signed_int16(raw_temp)
+                    temperature_celsius = signed_raw_temp / self.TEMP_SENSITIVITY + self.TEMP_OFFSET
+                    return temperature_celsius
+                except Exception as e2:
+                    self.logger.error(f"Failed to read temperature even after address switch to 0x{self.address:02x}: {e2}")
+                    return None
+            return None
