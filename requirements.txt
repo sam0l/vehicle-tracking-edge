@@ -1,2 +1,16 @@
-pyserial==3.5
-psutil 
+# Core dependencies
+smbus2>=0.4.1
+pyserial>=3.5
+numpy>=1.19.0  # Added for IMU Kalman filter implementation
+requests>=2.25.0
+paho-mqtt>=1.6.1
+dynaconf>=3.1.9
+python-dateutil>=2.8.2
+pytz>=2021.3
+
+# Logging
+structlog>=21.5.0
+
+# Development
+pytest>=6.2.5
+pytest-cov>=2.12.1 
