@@ -324,7 +324,7 @@ class IntegrationTester:
 def parse_args():
     parser = argparse.ArgumentParser(description="Integration Test Runner")
     parser.add_argument("--duration", type=int, default=60, help="Test duration in seconds")
-    parser.add_argument("--no-gui", action="store_true", help="Run without GUI visualization")
+    parser.add_argument("--gui", action="store_true", help="Run with GUI visualization (default: off)")
     parser.add_argument("--backend-port", type=int, default=8000, help="Port for the mock backend server")
     parser.add_argument("--net-delay", type=float, default=0, help="Simulated network delay in seconds")
     parser.add_argument("--net-fail", type=float, default=0.0, help="Simulated network failure rate (0.0 to 1.0)")
@@ -345,7 +345,7 @@ def main():
     try:
         tester = IntegrationTester(backend_url=backend_url)
         tester.simulate_network_conditions(args.net_delay, args.net_fail)
-        tester.run_test_loop(args.duration, visualize=not args.no_gui)
+        tester.run_test_loop(args.duration, visualize=args.gui)
         success = tester.report_results()
     except Exception as e:
         logger.error(f"Integration test failed critically: {e}", exc_info=True)
