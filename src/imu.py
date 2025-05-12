@@ -211,6 +211,10 @@ class IMU:
         self.motion_threshold = max(0.03, 5 * 0.000405)  # 5 * stdev from calibration
         self.stationary_threshold = 0.01  # Lower threshold for stationary state
         
+        # Force stationary state initially
+        self.is_stationary = True
+        self.consecutive_stationary_samples = 20  # Initialize with enough samples to be considered stationary
+        
         self.logger.info(f"Calibration complete: bias=[{avg_x:.4f}, {avg_y:.4f}, {avg_z:.4f}], gravity_norm={self.gravity_norm:.4f}")
 
     def initialize(self):
@@ -233,6 +237,12 @@ class IMU:
                     self.last_update_time = time.time()
                     self.last_gps_time = 0  # Not None to prevent type errors
                     self.last_motion_time = time.time()
+                    
+                    # Explicitly set initial state to stationary
+                    self.is_stationary = True
+                    self.current_speed = 0.0
+                    self.consecutive_stationary_samples = 20  # Initialize with enough samples to be considered stationary
+                    
                     return True
                 self.logger.warning(f"Failed to initialize IMU at address 0x{addr:02x}")
 
@@ -350,9 +360,10 @@ class IMU:
             gyro_y = to_signed((data[10] << 8) | data[11]) * self.gyro_scale
             gyro_z = to_signed((data[12] << 8) | data[13]) * self.gyro_scale
             
-            # Apply calibration correction to x and y axes
+            # Apply calibration correction to all three axes
             accel_x -= self.accel_bias[0]
             accel_y -= self.accel_bias[1]
+            accel_z -= self.accel_bias[2]
             
             # --- Improved Speed estimation for stationary detection ---
             # Only update speed if GPS data is not recent
@@ -382,8 +393,8 @@ class IMU:
                             self.logger.debug(f"Device is now stationary (accel={self.filtered_accel:.4f}g)")
                         self.is_stationary = True
                         
-                        # When stationary, aggressively reduce speed to zero
-                        self.current_speed = 0.0  # Force to zero immediately when stationary is confirmed
+                        # When stationary, immediately zero the speed
+                        self.current_speed = 0.0
                 else:
                     # Above the threshold - potential movement detected
                     self.consecutive_stationary_samples = 0
@@ -401,7 +412,7 @@ class IMU:
                         self.current_speed += accel_ms2 * dt
                         
                         # Apply more aggressive dampening to prevent drift
-                        self.current_speed *= (1.0 - 0.15 * dt)  # 15% decay per second (up from 5%)
+                        self.current_speed *= (1.0 - 0.25 * dt)  # 25% decay per second (was 15%)
                 
                 # Limit maximum speed to reasonable values and ensure minimum is 0
                 self.current_speed = min(33.3, max(0, self.current_speed))

@@ -142,6 +142,12 @@ class VehicleTracker:
         GPS provides absolute speed but can be noisy or have delay.
         IMU provides relative speed changes but can drift over time.
         We combine them using an exponential moving average.
+        
+        Fallback order:
+        1. Use weighted average of GPS and IMU when both available
+        2. Use GPS only when IMU unavailable
+        3. Use IMU only when GPS unavailable
+        4. Use last known speed if neither available
         """
         current_time = time.time()
         
@@ -153,12 +159,23 @@ class VehicleTracker:
             if imu_data and 'speed' in imu_data:
                 # We have both GPS and IMU speed, combine them using weighted average
                 imu_speed = imu_data['speed']
-                self.current_speed = (self.speed_alpha * gps_speed) + ((1 - self.speed_alpha) * imu_speed)
+                
+                # If IMU reports stationary (0 speed), give it more weight
+                # This helps quickly detect when vehicle stops
+                if imu_speed == 0 and imu_data.get('is_stationary', False):
+                    # Use 50/50 blend when IMU detects we're stopped
+                    self.current_speed = 0.5 * gps_speed + 0.5 * imu_speed
+                    if self.current_speed < 0.5:  # If combined speed is low enough, force to zero
+                        self.current_speed = 0.0
+                else:
+                    # Normal weighted average (80% GPS, 20% IMU)
+                    self.current_speed = (self.speed_alpha * gps_speed) + ((1 - self.speed_alpha) * imu_speed)
+                
                 # Enable IMU speed for future calculations
                 self.use_imu_speed = True
                 self.logger.debug(f"Speed calculation: GPS={gps_speed:.2f}, IMU={imu_speed:.2f}, Combined={self.current_speed:.2f}")
             else:
-                # Just use GPS speed
+                # Just use GPS speed (IMU unavailable)
                 self.current_speed = gps_speed
                 self.logger.debug(f"Speed calculation: using GPS speed only: {gps_speed:.2f}")
                 
@@ -166,7 +183,7 @@ class VehicleTracker:
             if self.imu and gps_data:
                 self.imu.update_gps(gps_data)
                 
-            return self.current_speed
+            return round(self.current_speed, 2)
             
         # If GPS speed is not available but IMU speed is, use IMU
         elif imu_data and 'speed' in imu_data:
@@ -175,12 +192,17 @@ class VehicleTracker:
             
             self.use_imu_speed = True
             self.current_speed = imu_data['speed']
+            
+            # If IMU reports stationary, ensure speed is exactly zero
+            if imu_data.get('is_stationary', False):
+                self.current_speed = 0.0
+                
             self.logger.debug(f"Speed calculation: using IMU speed: {self.current_speed:.2f}")
-            return self.current_speed
+            return round(self.current_speed, 2)
             
         # If neither is available, return the last known speed
         self.logger.debug(f"Speed calculation: no new data, using last speed: {self.current_speed:.2f}")
-        return self.current_speed
+        return round(self.current_speed, 2)
 
     def send_data(self, data, frame=None):
         """
@@ -235,6 +257,12 @@ class VehicleTracker:
                             telemetry_data["satellites"] = data["gps"]["satellites"]
                         if "altitude" in data["gps"]:
                             telemetry_data["altitude"] = data["gps"]["altitude"]
+                        
+                        # Flag dead reckoning data
+                        if data["gps"].get("dead_reckoning", False):
+                            telemetry_data["dead_reckoning"] = True
+                            telemetry_data["position_source"] = "imu"
+                            telemetry_data["accuracy"] = "low"  # Dead reckoning has lower accuracy
                             
                         payload_bytes = len(json.dumps(telemetry_data).encode('utf-8'))
                         self.logger.debug(f"Sending telemetry data (size: {payload_bytes} bytes): {telemetry_data}")
@@ -249,6 +277,7 @@ class VehicleTracker:
                         # Get current speed from IMU if GPS is not available
                         current_speed = 0.0
                         has_valid_gps = False
+                        is_dead_reckoning = False
                         
                         # Check if we have GPS data
                         if data.get("gps"):
@@ -257,6 +286,7 @@ class VehicleTracker:
                             lon = gps_data.get("longitude", 0.0)
                             spd = gps_data.get("speed", 0.0)
                             has_valid_gps = (lat != 0.0 and lon != 0.0)
+                            is_dead_reckoning = gps_data.get("dead_reckoning", False)
                         else:
                             # No GPS data, use default values
                             gps_data = {}
@@ -291,7 +321,7 @@ class VehicleTracker:
                                 "confidence": sign["confidence"],
                                 "connection_status": self.check_connectivity(),
                                 "update_type": "detection",  # Flag this as detection for backend
-                                "indoor_test": not has_valid_gps  # Flag if this is indoor testing without GPS
+                                "indoor_test": not has_valid_gps and not is_dead_reckoning  # Flag if this is indoor testing without GPS
                             }
                             
                             # Add additional GPS data if available
@@ -299,6 +329,12 @@ class VehicleTracker:
                                 detection_data["satellites"] = gps_data["satellites"]
                             if "altitude" in gps_data:
                                 detection_data["altitude"] = gps_data["altitude"]
+                            
+                            # Flag dead reckoning data
+                            if is_dead_reckoning:
+                                detection_data["dead_reckoning"] = True
+                                detection_data["position_source"] = "imu"
+                                detection_data["accuracy"] = "low"  # Dead reckoning has lower accuracy
                                 
                             if image_base64:
                                 detection_data["image"] = image_base64
@@ -421,6 +457,14 @@ class VehicleTracker:
         camera_init_interval = 30  # Retry camera every 30 seconds if failed
         consecutive_gps_failures = 0
         max_gps_failures = 10  # After this many consecutive failures, try to reinitialize GPS
+        consecutive_imu_failures = 0
+        max_imu_failures = 5  # After this many consecutive failures, try to reinitialize IMU
+        
+        # Initialize position tracking variables
+        last_known_position = None
+        using_dead_reckoning = False
+        dead_reckoning_start_time = 0
+        max_dead_reckoning_time = 300  # 5 minutes max dead reckoning
         
         try:
             while True:
@@ -429,6 +473,10 @@ class VehicleTracker:
                 frame = None
                 gps_data = None
                 imu_data = None
+                
+                # Tracked failure states
+                gps_failure = False
+                imu_failure = False
 
                 # GPS data
                 if current_time - last_gps >= self.config['logging']['interval']['gps']:
@@ -436,7 +484,9 @@ class VehicleTracker:
                         gps_data = self.gps.get_data()
                         if gps_data:
                             data.update({"gps": gps_data})
+                            last_known_position = (gps_data['latitude'], gps_data['longitude'])
                             consecutive_gps_failures = 0  # Reset failure counter on success
+                            using_dead_reckoning = False  # Reset dead reckoning flag
                             
                             # Log GPS fix details
                             satellites = gps_data.get("satellites", 0)
@@ -444,6 +494,7 @@ class VehicleTracker:
                         else:
                             self.logger.warning(f"No valid GPS data received (satellites visible: {self.gps.satellites})")
                             consecutive_gps_failures += 1
+                            gps_failure = True
                             
                             # If we've had too many consecutive failures, try to reinitialize GPS
                             if consecutive_gps_failures >= max_gps_failures:
@@ -456,6 +507,7 @@ class VehicleTracker:
                     except Exception as e:
                         self.logger.error(f"GPS error: {e}")
                         consecutive_gps_failures += 1
+                        gps_failure = True
                     last_gps = current_time
 
                 # IMU data
@@ -464,13 +516,54 @@ class VehicleTracker:
                         imu_data = self.imu.read_data()
                         if imu_data:
                             data.update({"imu": imu_data})
+                            consecutive_imu_failures = 0  # Reset failure counter on success
                             
                             # If we have GPS data, update IMU with it
                             if gps_data:
                                 self.imu.update_gps(gps_data)
+                                
+                            # If GPS has failed but IMU has position data, enter dead reckoning mode
+                            if gps_failure and imu_data.get('position') and not using_dead_reckoning:
+                                using_dead_reckoning = True
+                                dead_reckoning_start_time = current_time
+                                self.logger.info("Entering dead reckoning mode with IMU position data")
+                        else:
+                            self.logger.warning("No valid IMU data received")
+                            consecutive_imu_failures += 1
+                            imu_failure = True
+                            
+                            # If we've had too many consecutive failures, try to reinitialize IMU
+                            if consecutive_imu_failures >= max_imu_failures:
+                                self.logger.warning(f"Too many consecutive IMU failures ({consecutive_imu_failures}), reinitializing IMU...")
+                                try:
+                                    self.imu.initialize()
+                                    consecutive_imu_failures = 0
+                                except Exception as e:
+                                    self.logger.error(f"Failed to reinitialize IMU: {e}")
                     except Exception as e:
                         self.logger.error(f"IMU error: {e}")
+                        consecutive_imu_failures += 1
+                        imu_failure = True
                     last_imu = current_time
+                
+                # Dead reckoning fallback when GPS is down but IMU is working
+                if gps_failure and not imu_failure and using_dead_reckoning:
+                    # Check if we've been dead reckoning too long
+                    if current_time - dead_reckoning_start_time > max_dead_reckoning_time:
+                        self.logger.warning(f"Dead reckoning timeout ({max_dead_reckoning_time}s) exceeded, disabling")
+                        using_dead_reckoning = False
+                    elif imu_data and imu_data.get('position') and not data.get('gps'):
+                        # Create a synthetic GPS entry from IMU position data
+                        imu_pos = imu_data['position']
+                        if imu_pos:
+                            if 'gps' not in data:
+                                data['gps'] = {}
+                            data['gps']['latitude'] = imu_pos[0]
+                            data['gps']['longitude'] = imu_pos[1]
+                            data['gps']['speed'] = imu_data['speed']
+                            data['gps']['dead_reckoning'] = True  # Flag that this is from dead reckoning
+                            dr_duration = current_time - dead_reckoning_start_time
+                            self.logger.info(f"Using IMU dead reckoning position after {dr_duration:.1f}s: {imu_pos[0]:.6f},{imu_pos[1]:.6f}")
                 
                 # Calculate speed from GPS and IMU data
                 if gps_data or imu_data:
