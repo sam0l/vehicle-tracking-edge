@@ -92,27 +92,33 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
 
     with open(log_file, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["timestamp"] + subsystems)
+        writer.writerow(["timestamp"] + subsystems + ["IMU_speed", "IMU_position"])
         start_time = time.time()
         while (time.time() - start_time) < duration_seconds and not early_exit.is_set():
             timestamp = datetime.now().isoformat()
             # 1. GPS
             gps_status = "NOT WORKING"
+            gps_data = None
             try:
                 gps_data = gps.get_data()
-                if gps_data is not None or True:
+                if gps_data is not None:
                     gps_status = "WORKING"
+                    imu.update_gps(gps_data)
             except Exception:
                 gps_status = "NOT WORKING"
             total_counts["GPS"] += 1
             if gps_status == "WORKING":
                 up_counts["GPS"] += 1
 
-            # 2. IMU
+            # 2. IMU (use get_speed and get_position)
             imu_status = "NOT WORKING"
+            imu_speed = None
+            imu_position = None
             try:
                 imu_data = imu.read_data()
-                if imu_data is not None:
+                imu_speed = imu.get_speed()
+                imu_position = imu.get_position()
+                if imu_speed is not None and imu_position is not None:
                     imu_status = "WORKING"
             except Exception:
                 imu_status = "NOT WORKING"
@@ -139,11 +145,16 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv"):
             if internet_status == "WORKING":
                 up_counts["INTERNET"] += 1
 
-            # Print summary line to console
-            summary_line = f"GPS: {gps_status} | IMU: {imu_status} | DETECTION: {detection_status} | INTERNET: {internet_status}"
+            # Print summary line to console with IMU speed/position
+            summary_line = (
+                f"GPS: {gps_status} | IMU: {imu_status} | DETECTION: {detection_status} | INTERNET: {internet_status} "
+                f"| IMU_speed: {imu_speed} | IMU_position: {imu_position}"
+            )
             print(summary_line)
 
-            writer.writerow([timestamp, gps_status, imu_status, detection_status, internet_status])
+            writer.writerow([
+                timestamp, gps_status, imu_status, detection_status, internet_status, imu_speed, imu_position
+            ])
             time.sleep(1)
 
     # Print uptime stats

@@ -5,7 +5,7 @@ camera:
   fps: 30
 yolo:
   model_path: "models/yolov8n.onnx"
-  confidence_threshold: 0.8
+  confidence_threshold: 0.7
   imgsz: 640
   iou_threshold: 0.5
   send_images: true
@@ -45,6 +45,10 @@ sim:
   ussd_balance_code: "*221#"
   check_interval: 3600
   usage_post_interval: 30  # Interval in seconds to post data usage to backend
+  apn: "internet"  # Default APN - replace with your carrier's APN
+  dial_command: "ATD*99#"  # Standard dial command for most modems
+  ppp_retry_interval: 300  # Try reconnecting PPP every 5 minutes if lost
+  interfaces: ["ppp0", "wwan0"]  # Possible LTE interface names
 backend:
   url: "https://vehicle-tracking-backend-bwmz.onrender.com"
   endpoint_prefix: "/api"
@@ -63,6 +67,7 @@ logging:
 network:
   interface: ["ppp0", "wlan0"]  # List of interfaces to track (LTE and WiFi)
   retries: 3
+  ping_test_host: "8.8.8.8"  # Google DNS for connectivity tests
 
 api:
   port: 5000

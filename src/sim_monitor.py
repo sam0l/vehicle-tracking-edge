@@ -12,15 +12,80 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class SimMonitor:
-    def __init__(self, port="/dev/ttyUSB1", baudrate=115200, check_interval=3600, usage_file="data_usage.json", interfaces=None):
+    def __init__(self, port="/dev/ttyUSB1", baudrate=115200, check_interval=3600, usage_file="data_usage.json", interfaces=None, apn="internet"):
         self.port = port
         self.baudrate = baudrate
         self.check_interval = check_interval
         self.usage_file = usage_file
         self.usage_log = deque(maxlen=10000)  # Keep last 10k records in memory
         self.interfaces = interfaces if interfaces else ["ppp0"]
+        self.apn = apn
+        self.serial = None
         self.last_counters = self.get_current_counters()
         self.load_usage()
+
+    def initialize(self):
+        """Initialize modem connection and set up PPP if needed."""
+        try:
+            self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
+            logger.info(f"Opened serial port {self.port}")
+            
+            # Check if modem is responsive
+            response = self.send_at_command("AT")
+            if not response or "OK" not in response:
+                logger.error(f"Modem not responding correctly: {response}")
+                return False
+                
+            # Check SIM card status
+            sim_status = self.send_at_command("AT+CPIN?")
+            if not sim_status or "READY" not in sim_status:
+                logger.error(f"SIM card not ready: {sim_status}")
+                return False
+            
+            # Check network registration
+            reg_status = self.send_at_command("AT+CREG?")
+            if not reg_status:
+                logger.error("Failed to check network registration")
+                return False
+            
+            # Set APN (essential for internet connectivity)
+            apn_cmd = f'AT+CGDCONT=1,"IP","{self.apn}"'
+            apn_response = self.send_at_command(apn_cmd)
+            if not apn_response or "ERROR" in apn_response:
+                logger.error(f"Failed to set APN: {apn_response}")
+                # Continue anyway, might be already set
+            
+            logger.info("SIM Monitor initialized successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize SIM monitor: {e}")
+            return False
+
+    def send_at_command(self, command, timeout=2):
+        """Send AT command and return response."""
+        if not self.serial:
+            logger.error("Serial port not initialized")
+            return None
+        
+        try:
+            self.serial.write((command + "\r\n").encode())
+            time.sleep(0.1)
+            
+            response = ""
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                if self.serial.in_waiting:
+                    new_data = self.serial.read(self.serial.in_waiting).decode(errors='ignore')
+                    response += new_data
+                if "OK" in response or "ERROR" in response:
+                    break
+                time.sleep(0.1)
+            
+            logger.debug(f"AT command '{command}' response: {response.strip()}")
+            return response.strip()
+        except Exception as e:
+            logger.error(f"Error sending AT command '{command}': {e}")
+            return None
 
     def load_usage(self):
         try:
@@ -85,13 +150,88 @@ class SimMonitor:
             self.log_data_usage(delta_sent, delta_recv)
         self.last_counters = current
 
+    def check_sim_balance(self):
+        """Check SIM card balance using USSD code."""
+        # Implementation varies by carrier
+        # This is a basic example that might need modification for your specific carrier
+        if not hasattr(self, 'ussd_balance_code'):
+            logger.warning("No USSD balance code configured")
+            return None
+            
+        response = self.send_at_command(f'AT+CUSD=1,"{self.ussd_balance_code}"', timeout=10)
+        if response and "+CUSD:" in response:
+            # Extract balance info from response
+            try:
+                parts = response.split('"')
+                if len(parts) > 1:
+                    return {"balance": parts[1]}
+            except Exception as e:
+                logger.error(f"Error parsing balance response: {e}")
+        return None
+
+    def get_data_usage(self):
+        """Get data usage statistics."""
+        return self.get_usage_stats()
+    
+    def get_network_info(self):
+        """Get network information."""
+        if not self.serial:
+            logger.error("Serial not initialized")
+            return None
+            
+        network_info = {}
+        
+        # Check registration status
+        reg_status = self.send_at_command("AT+CREG?")
+        if reg_status and "+CREG:" in reg_status:
+            network_info["registration"] = reg_status
+            
+        # Check operator
+        operator = self.send_at_command("AT+COPS?")
+        if operator and "+COPS:" in operator:
+            network_info["operator"] = operator
+            
+        # Check connection status
+        connection = self.send_at_command("AT+CGACT?")
+        if connection and "+CGACT:" in connection:
+            network_info["connection"] = connection
+            
+        return network_info if network_info else None
+    
+    def get_signal_strength(self):
+        """Get signal strength."""
+        if not self.serial:
+            logger.error("Serial not initialized")
+            return None
+            
+        signal = self.send_at_command("AT+CSQ")
+        if signal and "+CSQ:" in signal:
+            try:
+                # Format: +CSQ: xx,yy where xx is signal strength (0-31, 99=unknown)
+                parts = signal.split(":")
+                if len(parts) > 1:
+                    values = parts[1].strip().split(",")
+                    if len(values) > 0:
+                        signal_value = int(values[0])
+                        # Convert to percentage (0-31 → 0-100%)
+                        if signal_value < 99:
+                            percentage = min(100, int(signal_value * 100 / 31))
+                            return {"signal": signal_value, "percentage": percentage}
+            except Exception as e:
+                logger.error(f"Error parsing signal strength: {e}")
+        return None
+
     def close(self):
-        pass
+        """Close serial connection."""
+        if self.serial:
+            self.serial.close()
+            self.serial = None
+            logger.info("Serial connection closed")
 
 def send_to_backend(balance_info, data_usage, network_info, signal_strength):
     """Send SIM data to backend."""
     try:
-        url = "https://vehicle-tracking-backend-bwmz.onrender.com/api/sim-data"  # Use the correct backend URL
+        url = "https://vehicle-tracking-backend-bwmz.onrender.com/api/sim-data"
         data = {
             "balance": balance_info,
             "data_usage": data_usage,
@@ -100,8 +240,8 @@ def send_to_backend(balance_info, data_usage, network_info, signal_strength):
             "timestamp": datetime.now().isoformat()
         }
         logger.info(f"Sending SIM data to backend at {url}")
-        logger.info(f"Data being sent: {data}")
-        response = requests.post(url, json=data)
+        logger.debug(f"Data being sent: {data}")
+        response = requests.post(url, json=data, timeout=30)
         response.raise_for_status()
         logger.info(f"SIM data sent successfully. Response: {response.status_code}")
         return True
@@ -113,7 +253,7 @@ def send_to_backend(balance_info, data_usage, network_info, signal_strength):
         return False
 
 def sim_monitor_thread(config=None):
-    """Thread to monitor SIM data."""
+    """Thread to monitor SIM data and connectivity."""
     logger.info("Starting SIM monitor thread...")
     sim_cfg = config['sim'] if config and 'sim' in config else {}
     monitor = SimMonitor(
@@ -121,8 +261,10 @@ def sim_monitor_thread(config=None):
         baudrate=sim_cfg.get('baudrate', 115200),
         check_interval=sim_cfg.get('check_interval', 3600),
         usage_file=sim_cfg.get('usage_file', "data_usage.json"),
-        interfaces=sim_cfg.get('interfaces', None)
+        interfaces=sim_cfg.get('interfaces', ["ppp0"]),
+        apn=sim_cfg.get('apn', "internet")
     )
+    
     if not monitor.initialize():
         logger.error("Failed to initialize SIM monitor")
         return
@@ -151,20 +293,28 @@ def sim_monitor_thread(config=None):
             signal = monitor.send_at_command("AT+CSQ")
             logger.info(f"Signal strength: {signal}")
             
+            # Update data usage counters
+            monitor.update_data_usage()
+            
             # Collect all data
             balance_info = monitor.check_sim_balance()
             data_usage = monitor.get_data_usage()
             network_info = monitor.get_network_info()
             signal_strength = monitor.get_signal_strength()
 
+            # Try to send data to backend
             if any([balance_info, data_usage, network_info, signal_strength]):
                 logger.info("Sending collected SIM data to backend...")
-                send_to_backend(balance_info, data_usage, network_info, signal_strength)
+                send_result = send_to_backend(balance_info, data_usage, network_info, signal_strength)
+                if not send_result:
+                    logger.warning("Failed to send data to backend")
             else:
                 logger.warning("No SIM data collected in this cycle")
 
             logger.info(f"Waiting {monitor.check_interval} seconds until next SIM data check...")
-            time.sleep(monitor.check_interval)  # Use configurable interval
+            time.sleep(monitor.check_interval)
+    except KeyboardInterrupt:
+        logger.info("SIM monitor thread stopped by user")
     except Exception as e:
         logger.error(f"Error in SIM monitor thread: {e}")
     finally:
