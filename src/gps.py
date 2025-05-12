@@ -75,12 +75,20 @@ class GPS:
         response = self.read_response(timeout=2)
         self.logger.debug(f"AGPS check response: {response}")
         if "+CAGPS: 1" not in response:
-            # Attempt to enable AGPS
+            # Attempt to enable AGPS with exactly 'AT+CAGPS' command
+            self.logger.info("Enabling AGPS...")
+            self.serial.write(b'AT+CAGPS\r\n')
+            
+            # Wait for the specified AGPS delay before checking for success
+            self.logger.debug(f"Waiting for {self.agps_delay} seconds before checking for AGPS success...")
             time.sleep(self.agps_delay)
-            if not self.send_command("AT+CAGPS", "+AGPS: success", timeout=10):
-                self.logger.warning("Failed to enable AGPS, continuing without AGPS")
-            else:
+            
+            # Now check for success response
+            response = self.read_response(timeout=10)
+            if "+AGPS: success" in response:
                 self.logger.info("AGPS enabled successfully")
+            else:
+                self.logger.warning(f"Failed to enable AGPS, continuing without AGPS. Response: {response}")
         else:
             self.logger.info("AGPS already enabled")
 
