@@ -150,9 +150,10 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
     try:
         detector = SignDetector(config_path=CONFIG_PATH)
         detector_initialized = True
-        print("[INFO] SignDetector initialized.")
+        # print("[INFO] SignDetector initialized.")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize SignDetector: {e}")
+        # print(f"[ERROR] Failed to initialize SignDetector: {e}")
+        pass # Suppress error print
 
     try:
         camera = Camera(
@@ -163,11 +164,13 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
         )
         if camera.initialize():
             camera_initialized = True
-            print("[INFO] Camera initialized.")
+            # print("[INFO] Camera initialized.")
         else:
-            print("[ERROR] Camera initialization failed.")
+            # print("[ERROR] Camera initialization failed.")
+            pass # Suppress error print
     except Exception as e:
-        print(f"[ERROR] Failed to initialize Camera: {e}")
+        # print(f"[ERROR] Failed to initialize Camera: {e}")
+        pass # Suppress error print
 
     try:
         gps = GPS(
@@ -179,11 +182,13 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
         )
         if gps.initialize():
             gps_initialized = True
-            print("[INFO] GPS initialized.")
+            # print("[INFO] GPS initialized.")
         else:
-            print("[ERROR] GPS initialization failed.")
+            # print("[ERROR] GPS initialization failed.")
+            pass # Suppress error print
     except Exception as e:
-        print(f"[ERROR] Failed to initialize GPS: {e}")
+        # print(f"[ERROR] Failed to initialize GPS: {e}")
+        pass # Suppress error print
 
     try:
         imu = IMU(
@@ -195,11 +200,13 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
         )
         if imu.initialize():
             imu_initialized = True
-            print("[INFO] IMU initialized.")
+            # print("[INFO] IMU initialized.")
         else:
-            print("[ERROR] IMU initialization failed.")
+            # print("[ERROR] IMU initialization failed.")
+            pass # Suppress error print
     except Exception as e:
-        print(f"[ERROR] Failed to initialize IMU: {e}")
+        # print(f"[ERROR] Failed to initialize IMU: {e}")
+        pass # Suppress error print
 
     subsystems = ["GPS", "IMU", "DETECTION", "INTERNET"]
     up_counts = {k: 0 for k in subsystems}
@@ -218,7 +225,6 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
 
         # Write headers
         main_writer.writerow(["timestamp"] + subsystems + ["IMU_speed", "IMU_position"])
-        # Add system temp keys to the temperature log header
         temp_writer.writerow(["timestamp", "imu_temp_celsius"] + system_temp_keys)
 
         start_time = time.time()
@@ -236,7 +242,7 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
                         imu.update_gps(gps_data)
                 except Exception as gps_e:
                     # Log read error but don't change status if initialized
-                    print(f"[WARN] Failed to read GPS data (but GPS considered working): {gps_e}")
+                    # print(f"[WARN] Failed to read GPS data (but GPS considered working): {gps_e}")
                     gps_status = "WORKING (Read Error)" # Indicate read issue
 
             # Update GPS counts
@@ -262,7 +268,7 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
                         imu_status = "WORKING"
                     else:
                         # read_data returned None, still an issue
-                        print("[WARN] imu.read_data() returned None.")
+                        # print("[WARN] imu.read_data() returned None.")
                         imu_status = "NOT WORKING (Read Failed)"
 
                     # If core data failed, try getting temp separately (optional, might hide issues)
@@ -274,10 +280,11 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
                     #             imu_status = "WORKING (Temp Only)"
                     #             # Don't set imu_data_read_success = True here
                     #     except Exception as temp_e:
-                    #          print(f"[WARN] Could not read IMU temperature separately: {temp_e}")
+                    #          # print(f"[WARN] Could not read IMU temperature separately: {temp_e}")
+                    #          pass
 
                 except Exception as imu_e:
-                    print(f"[ERROR] Error reading IMU data: {imu_e}")
+                    # print(f"[ERROR] Error reading IMU data: {imu_e}")
                     imu_status = "NOT WORKING (Exception)"
 
             # Update IMU counts
@@ -295,10 +302,10 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
                         detector.detect(frame) # Assuming detect raises error on failure
                         detection_status = "WORKING"
                     else:
-                        print("[WARN] Failed to get frame from camera for detection.")
+                        # print("[WARN] Failed to get frame from camera for detection.")
                         detection_status = "NOT WORKING (No Frame)"
                 except Exception as det_e:
-                    print(f"[ERROR] Error during detection: {det_e}")
+                    # print(f"[ERROR] Error during detection: {det_e}")
                     detection_status = "NOT WORKING (Exception)"
 
             # Update Detection counts
@@ -351,14 +358,14 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
 
             time.sleep(1)
 
-    # Print uptime stats
-    print("\n[INFO] Test complete. Uptime summary:")
-    for subsystem in subsystems:
-        up = up_counts[subsystem]
-        total = total_counts[subsystem]
-        down = total - up
-        uptime_percent = (up / total) * 100 if total else 0
-        print(f"{subsystem}: Uptime={up}s, Breakdown={down}s, Uptime%={uptime_percent:.2f}")
+    # Suppress final uptime stats print
+    # print("\n[INFO] Test complete. Uptime summary:")
+    # for subsystem in subsystems:
+    #     up = up_counts[subsystem]
+    #     total = total_counts[subsystem]
+    #     down = total - up
+    #     uptime_percent = (up / total) * 100 if total else 0
+    #     print(f"{subsystem}: Uptime={up}s, Breakdown={down}s, Uptime%={uptime_percent:.2f}")
 
 if __name__ == "__main__":
     main() 
