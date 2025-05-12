@@ -309,7 +309,8 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
 
             # 5. System Temperatures
             system_temps = get_system_temperatures()
-            cpu_temp_avg = system_temps.get('temp_cpu_avg') # Get the calculated average CPU temp
+            # Get the specific temperature for 'center_thermal' if available
+            cpu_temp_center = system_temps.get('temp_center') 
 
             # Print summary line to console with status
             summary_line = (
@@ -317,7 +318,7 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
                 f"| Speed: {f'{imu_speed:.1f}' if imu_speed is not None else 'N/A'} "
                 f"| Pos: {f'{imu_position[0]:.5f},{imu_position[1]:.5f}' if imu_position else 'N/A'} "
                 f"| IMU Temp: {f'{imu_temperature:.1f}C' if imu_temperature is not None else 'N/A'} "
-                f"| CPU Temp: {f'{cpu_temp_avg:.1f}C' if cpu_temp_avg is not None else 'N/A'}"
+                f"| CPU Temp: {f'{cpu_temp_center:.1f}C' if cpu_temp_center is not None else 'N/A'}" # Use temp_center directly
             )
             print(summary_line)
 
