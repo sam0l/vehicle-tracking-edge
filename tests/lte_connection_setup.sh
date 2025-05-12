@@ -121,7 +121,7 @@ Description=LTE PPP Connection
 After=network.target
 
 [Service]
-Type=simple
+Type=forking
 ExecStart=/usr/sbin/pppd call lte
 Restart=always
 RestartSec=30

@@ -138,6 +138,28 @@ fi
 EOF
 chmod +x /usr/local/bin/check-lte
 
+# After the setup is complete, add the nodetach option to the pppd config if it's missing
+echo -e "${YELLOW}Adding persistence options to PPP config...${NC}"
+PEER_FILE="/etc/ppp/peers/lte"
+if ! grep -q "persist" "$PEER_FILE"; then
+  echo "persist" >> "$PEER_FILE"
+  echo -e "${GREEN}Added 'persist' option to PPP config${NC}"
+fi
+
+if ! grep -q "maxfail 0" "$PEER_FILE"; then
+  echo "maxfail 0" >> "$PEER_FILE"
+  echo -e "${GREEN}Added 'maxfail 0' option to PPP config${NC}"
+fi
+
+if ! grep -q "holdoff 10" "$PEER_FILE"; then
+  echo "holdoff 10" >> "$PEER_FILE"
+  echo -e "${GREEN}Added 'holdoff 10' option to PPP config${NC}"
+fi
+
+# Fix pppd daemon mode
+systemctl stop lte-connection
+systemctl daemon-reload
+
 echo -e "${GREEN}=== Setup Complete! ===${NC}"
 echo -e "${YELLOW}To manually start the connection:${NC}"
 echo -e "  ${GREEN}sudo systemctl start lte-connection${NC}"
