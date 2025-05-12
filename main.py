@@ -68,6 +68,19 @@ class VehicleTracker:
         )
         self.app = app  # Store Flask app as instance variable
         self.setup_routes()
+        
+        # Keep track of last telemetry update to optimize real-time map updates
+        self.last_telemetry_send_time = 0
+        self.telemetry_interval = 3  # Send telemetry every 3 seconds to update map
+        
+        # Current speed in m/s, calculated from GPS and IMU
+        self.current_speed = 0.0
+        
+        # Speed calculation parameters
+        self.speed_alpha = 0.8  # Weight factor for GPS speed (1-alpha for IMU)
+        self.use_imu_speed = False  # Flag to indicate if IMU speed should be used
+        self.last_speed_update = 0
+        self.max_speed_age = 10  # Maximum age for speed data in seconds
 
     def setup_logging(self):
         logging.basicConfig(
@@ -124,7 +137,51 @@ class VehicleTracker:
             self.logger.warning(f"No network connectivity: {e}")
             return False
 
+    def calculate_speed(self, gps_data, imu_data):
+        """
+        Calculate a more accurate speed by combining GPS and IMU data.
+        
+        GPS provides absolute speed but can be noisy or have delay.
+        IMU provides relative speed changes but can drift over time.
+        We combine them using an exponential moving average.
+        """
+        current_time = time.time()
+        
+        # Initialize with GPS speed if available
+        if gps_data and 'speed' in gps_data and gps_data['speed'] is not None:
+            gps_speed = gps_data['speed']
+            self.last_speed_update = current_time
+            
+            if self.use_imu_speed and imu_data and 'speed' in imu_data:
+                # Combine GPS and IMU speeds using weighted average
+                imu_speed = imu_data['speed']
+                self.current_speed = (self.speed_alpha * gps_speed) + ((1 - self.speed_alpha) * imu_speed)
+                self.logger.debug(f"Speed calculation: GPS={gps_speed:.2f}, IMU={imu_speed:.2f}, Combined={self.current_speed:.2f}")
+            else:
+                # Just use GPS speed
+                self.current_speed = gps_speed
+                
+            # Update IMU with latest GPS data for better dead reckoning
+            if self.imu and gps_data:
+                self.imu.update_gps(gps_data)
+                
+            return self.current_speed
+            
+        # If GPS speed is not available but IMU speed is, use IMU
+        elif imu_data and 'speed' in imu_data and current_time - self.last_speed_update < self.max_speed_age:
+            self.use_imu_speed = True
+            self.current_speed = imu_data['speed']
+            return self.current_speed
+            
+        # If neither is available, return the last known speed
+        return self.current_speed
+
     def send_data(self, data, frame=None):
+        """
+        Send data to the backend server:
+        1. Regular telemetry updates (position, speed) for map updates
+        2. Sign detections when they occur (with position, speed, and sign info)
+        """
         if not self.check_connectivity():
             self.logger.error("No network connection, skipping send")
             return False
@@ -133,17 +190,38 @@ class VehicleTracker:
             url = f"{self.config['backend']['url']}{self.config['backend']['endpoint_prefix']}{self.config['backend']['detection_endpoint']}"
             timestamp = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S").isoformat()
             retries = 3
+            current_time = time.time()
+            send_telemetry = False
+            send_detection = False
+
+            # Determine if we should send telemetry (for map updates)
+            if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
+                # Send telemetry at regular intervals for map updates
+                if current_time - self.last_telemetry_send_time >= self.telemetry_interval:
+                    send_telemetry = True
+                    self.last_telemetry_send_time = current_time
+
+            # Determine if we should send detection data
+            if data.get("signs") and len(data.get("signs")) > 0:
+                send_detection = True
+
+            # If nothing to send, return early
+            if not (send_telemetry or send_detection):
+                return True
+
+            # Create combined telemetry and detection data
             for attempt in range(retries):
                 try:
-                    # Send telemetry data (GPS)
-                    if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
-                        # Create basic telemetry data
+                    # Send telemetry data for map updates (independent of detections)
+                    if send_telemetry:
+                        # Create telemetry data
                         telemetry_data = {
                             "latitude": data["gps"]["latitude"],
                             "longitude": data["gps"]["longitude"],
                             "speed": data["gps"].get("speed", 0.0),
                             "timestamp": timestamp,
-                            "connection_status": self.check_connectivity()
+                            "connection_status": self.check_connectivity(),
+                            "update_type": "position"  # Flag this as position update for map
                         }
                         
                         # Add additional GPS data if available
@@ -159,21 +237,24 @@ class VehicleTracker:
                         response_bytes = len(response.content)
                         self.sim_monitor.update_data_usage()
                         self.logger.info(f"Telemetry data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
-                    else:
-                        self.logger.debug("No valid GPS data to send for telemetry. Telemetry POST skipped.")
 
-                    # Send detection data (signs)
-                    if self.sign_detector and data.get("signs") and frame is not None:
+                    # Send detection data only when signs are detected
+                    if send_detection and self.sign_detector:
                         gps_data = data.get("gps") if data.get("gps") else {}
                         lat = gps_data.get("latitude", 0.0)
                         lon = gps_data.get("longitude", 0.0)
                         spd = gps_data.get("speed", 0.0)
+                        
+                        # Only send detections with valid GPS data
                         if not (gps_data.get("latitude") and gps_data.get("longitude")):
-                            self.logger.warning("Sending detections without valid GPS data (lat/lon set to 0.0)")
+                            self.logger.warning("Skipping detections without valid GPS data")
+                            continue
+                            
                         image_base64 = None
-                        if self.config['yolo']['send_images']:
+                        if self.config['yolo']['send_images'] and frame is not None:
                             _, buffer = cv2.imencode('.jpg', frame)
                             image_base64 = base64.b64encode(buffer).decode('utf-8')
+                            
                         for sign in data["signs"]:
                             detection_data = {
                                 "latitude": lat,
@@ -182,10 +263,19 @@ class VehicleTracker:
                                 "timestamp": timestamp,
                                 "sign_type": sign["label"],
                                 "confidence": sign["confidence"],
-                                "connection_status": self.check_connectivity()
+                                "connection_status": self.check_connectivity(),
+                                "update_type": "detection"  # Flag this as detection for backend
                             }
+                            
+                            # Add additional GPS data if available
+                            if "satellites" in data["gps"]:
+                                detection_data["satellites"] = data["gps"]["satellites"]
+                            if "altitude" in data["gps"]:
+                                detection_data["altitude"] = data["gps"]["altitude"]
+                                
                             if image_base64:
                                 detection_data["image"] = image_base64
+                                
                             payload_bytes = len(json.dumps(detection_data).encode('utf-8'))
                             self.logger.debug(f"[SEND] Attempting to send detection data (size: {payload_bytes} bytes): {detection_data}")
                             response = requests.post(url, json=detection_data, timeout=30)
@@ -193,8 +283,6 @@ class VehicleTracker:
                             response_bytes = len(response.content)
                             self.sim_monitor.update_data_usage()
                             self.logger.info(f"[SEND] Detection data sent successfully (sent: {payload_bytes} bytes, received: {response_bytes} bytes)")
-                    elif data.get("signs"):
-                        self.logger.warning("Detections present but sign_detector or frame missing. Detection POST skipped. Detection payload(s): " + str(data.get("signs")))
 
                     return True
                 except requests.RequestException as e:
@@ -312,6 +400,8 @@ class VehicleTracker:
                 current_time = time.time()
                 data = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S")}
                 frame = None
+                gps_data = None
+                imu_data = None
 
                 # GPS data
                 if current_time - last_gps >= self.config['logging']['interval']['gps']:
@@ -347,29 +437,33 @@ class VehicleTracker:
                         imu_data = self.imu.read_data()
                         if imu_data:
                             data.update({"imu": imu_data})
+                            
+                            # If we have GPS data, update IMU with it
+                            if gps_data:
+                                self.imu.update_gps(gps_data)
                     except Exception as e:
                         self.logger.error(f"IMU error: {e}")
                     last_imu = current_time
+                
+                # Calculate speed from GPS and IMU data
+                if gps_data or imu_data:
+                    speed = self.calculate_speed(gps_data, imu_data)
+                    # Update GPS data with calculated speed
+                    if "gps" in data and speed is not None:
+                        data["gps"]["speed"] = speed
 
-                # Camera data
+                # Camera data and sign detection
                 if self.camera_initialized and current_time - last_camera >= self.config['logging']['interval']['camera']:
                     try:
                         frame = self.camera.get_frame()
                         if frame is not None:
-                            print(f"[DEBUG] Frame captured: {frame.shape}")
+                            # Only detect signs if we have a valid frame
                             if self.sign_detector:
                                 signs = self.sign_detector.detect(frame)
-                                debug_signs = []
-                                for s in signs:
-                                    s_copy = dict(s)
-                                    if 'image' in s_copy:
-                                        s_copy['image'] = s_copy['image'][:32] + '...' if s_copy['image'] else ''
-                                    debug_signs.append(s_copy)
-                                print(f"[DEBUG] Detections: {debug_signs}")
-                                if signs:
+                                if signs:  # Only add signs to data if we found any
                                     data.update({"signs": signs})
                         else:
-                            print("[DEBUG] No frame captured from camera!")
+                            self.logger.debug("No frame captured from camera")
                     except Exception as e:
                         self.logger.error(f"Camera error: {e}")
                     last_camera = current_time
@@ -380,8 +474,18 @@ class VehicleTracker:
                         self.logger.error(f"Camera init error: {e}")
                     last_camera_init = current_time
 
-                # Send data if we have GPS or detections
-                if (data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude")) or data.get("signs"):
+                # Send data to backend or log offline
+                should_send = False
+                
+                # Send if we have a valid GPS position (for map updates)
+                if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
+                    should_send = True
+                    
+                # Also send if we have sign detections
+                if data.get("signs"):
+                    should_send = True
+                
+                if should_send:
                     if not self.send_data(data, frame if frame is not None else None):
                         self.log_offline(data)
                 else:
@@ -396,6 +500,21 @@ class VehicleTracker:
             self.logger.info("Shutting down...")
         finally:
             self.cleanup()
+            
+    def cleanup(self):
+        """Clean up resources before shutdown."""
+        try:
+            if self.gps:
+                self.gps.close()
+            if self.imu:
+                self.imu.close()
+            if self.camera:
+                self.camera.close()
+            if self.sign_detector:
+                self.sign_detector.close()
+            self.logger.info("All resources cleaned up")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
 
 if __name__ == "__main__":
     tracker = VehicleTracker("config/config.yaml")
