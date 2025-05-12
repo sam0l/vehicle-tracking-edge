@@ -79,6 +79,11 @@ class VehicleTracker:
         self.use_imu_speed = False
         self.last_speed_update = time.time()  # Initialize to current time instead of 0
         self.max_speed_age = 30  # Maximum age for speed data in seconds (increased from 10s)
+        
+        # Detection deduplication parameters
+        self.recent_detections = {}  # Dictionary to track recent detections
+        self.detection_timeout = self.config.get('detection', {}).get('deduplication_timeout', 10.0)  # Time in seconds to ignore duplicate detections
+        self.detection_distance_threshold = self.config.get('detection', {}).get('distance_threshold', 0.001)  # ~100m in lat/long units
 
     def setup_logging(self):
         logging.basicConfig(
@@ -434,6 +439,79 @@ class VehicleTracker:
             except Exception as e:
                 self.logger.warning(f"Error posting data usage: {e}")
 
+    def filter_duplicate_detections(self, signs, position, current_time):
+        """
+        Filter out duplicate detections of the same sign type in a short time period at similar positions.
+        
+        Args:
+            signs (list): List of detected signs
+            position (tuple): Current position (latitude, longitude)
+            current_time (float): Current timestamp
+            
+        Returns:
+            list: Filtered list of signs with duplicates removed
+        """
+        if not signs:
+            return []
+            
+        if not position or position[0] == 0 or position[1] == 0:
+            # If position is invalid, use time-based filtering only
+            position = None
+            
+        filtered_signs = []
+        
+        for sign in signs:
+            sign_type = sign['label']
+            detection_key = sign_type
+            
+            # Check if we've seen this sign recently
+            should_include = True
+            
+            if detection_key in self.recent_detections:
+                last_detection = self.recent_detections[detection_key]
+                time_diff = current_time - last_detection['time']
+                
+                # If the detection was recent (within timeout)
+                if time_diff < self.detection_timeout:
+                    # Check if position has changed significantly (if we have position data)
+                    if position and last_detection['position']:
+                        # Calculate approximate distance between positions (rough estimate)
+                        lat_diff = abs(position[0] - last_detection['position'][0])
+                        lon_diff = abs(position[1] - last_detection['position'][1])
+                        
+                        # If position is similar, consider it a duplicate
+                        if lat_diff < self.detection_distance_threshold and lon_diff < self.detection_distance_threshold:
+                            should_include = False
+                            self.logger.debug(
+                                f"Filtering duplicate detection of {sign_type}: " 
+                                f"Time since last: {time_diff:.1f}s, "
+                                f"Position diff: {lat_diff:.6f}, {lon_diff:.6f}"
+                            )
+                    else:
+                        # Without position data, use time-based filtering only
+                        should_include = False
+                        self.logger.debug(f"Filtering duplicate detection of {sign_type}: Time since last: {time_diff:.1f}s")
+            
+            if should_include:
+                filtered_signs.append(sign)
+                # Update the recent detection record
+                self.recent_detections[detection_key] = {
+                    'time': current_time,
+                    'position': position
+                }
+                
+        # Clean up old entries
+        for key in list(self.recent_detections.keys()):
+            if current_time - self.recent_detections[key]['time'] > self.detection_timeout:
+                self.logger.debug(f"Removing stale detection record for {key}")
+                del self.recent_detections[key]
+                
+        # Log filtering statistics if any filtering occurred
+        if len(signs) != len(filtered_signs):
+            self.logger.info(f"Filtered {len(signs) - len(filtered_signs)} duplicate detections out of {len(signs)} total")
+            
+        return filtered_signs
+
     def run(self):
         if not self.initialize():
             self.logger.error("Initialization failed, exiting")
@@ -584,7 +662,19 @@ class VehicleTracker:
                             if self.sign_detector:
                                 signs = self.sign_detector.detect(frame)
                                 if signs:  # Only add signs to data if we found any
-                                    data.update({"signs": signs})
+                                    # Get current position for filtering
+                                    position = None
+                                    if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
+                                        position = (data["gps"]["latitude"], data["gps"]["longitude"])
+                                    elif data.get("imu") and data["imu"].get("position"):
+                                        position = data["imu"]["position"]
+                                        
+                                    # Filter out duplicate detections
+                                    filtered_signs = self.filter_duplicate_detections(signs, position, current_time)
+                                    
+                                    if filtered_signs:  # Only update data if we have non-duplicate signs
+                                        data.update({"signs": filtered_signs})
+                                        self.logger.info(f"Adding {len(filtered_signs)} filtered sign detections to data")
                         else:
                             self.logger.debug("No frame captured from camera")
                     except Exception as e:

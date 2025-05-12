@@ -86,3 +86,7 @@ api:
 test_server:
   host: "0.0.0.0"  # Listen on all interfaces for LAN access
   port: 8081        # Default test server port
+
+detection:
+  deduplication_timeout: 10  # Time in seconds to ignore repeated detections of the same sign
+  distance_threshold: 0.001  # Approximate distance threshold for considering detections at same location (~100m)
