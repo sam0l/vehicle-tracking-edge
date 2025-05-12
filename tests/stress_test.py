@@ -90,6 +90,16 @@ def get_system_temperatures():
                  key = name.replace('_thermal','')
                  temps[f'temp_{key}'] = float(temp_str)
 
+        # Calculate average CPU temperature from core temps if available
+        cpu_core_keys = ['temp_littlecore', 'temp_bigcore0', 'temp_bigcore1', 'temp_center']
+        core_temps = [temps[key] for key in cpu_core_keys if key in temps]
+        if core_temps:
+            temps['temp_cpu_avg'] = sum(core_temps) / len(core_temps)
+        else:
+            # Fallback: Check if 'temp_soc' exists as a proxy for CPU temp
+            if 'temp_soc' in temps:
+                 temps['temp_cpu_avg'] = temps['temp_soc']
+
     except FileNotFoundError:
         print("[WARN] 'sensors' command not found. Cannot read system temperatures.")
     except subprocess.TimeoutExpired:
@@ -299,11 +309,15 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
 
             # 5. System Temperatures
             system_temps = get_system_temperatures()
+            cpu_temp_avg = system_temps.get('temp_cpu_avg') # Get the calculated average CPU temp
 
             # Print summary line to console with status
             summary_line = (
                 f"GPS: {gps_status} | IMU: {imu_status} | DETECTION: {detection_status} | INTERNET: {internet_status} "
-                f"| Speed: {imu_speed if imu_speed is not None else 'N/A'} | Pos: {imu_position if imu_position is not None else 'N/A'} | Temp: {imu_temperature if imu_temperature is not None else 'N/A'}"
+                f"| Speed: {f'{imu_speed:.1f}' if imu_speed is not None else 'N/A'} "
+                f"| Pos: {f'{imu_position[0]:.5f},{imu_position[1]:.5f}' if imu_position else 'N/A'} "
+                f"| IMU Temp: {f'{imu_temperature:.1f}C' if imu_temperature is not None else 'N/A'} "
+                f"| CPU Temp: {f'{cpu_temp_avg:.1f}C' if cpu_temp_avg is not None else 'N/A'}"
             )
             print(summary_line)
 
