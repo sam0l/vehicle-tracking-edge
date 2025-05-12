@@ -13,7 +13,8 @@ class GPS:
         self.serial = None
         self.has_fix = False
         self.last_fix_check = 0
-        self.fix_check_interval = 10  # Check for fix every 10 seconds
+        self.fix_check_interval = 5  # Check for fix every 5 seconds
+        self.satellites = 0
 
     def read_response(self, timeout=5):
         start_time = time.time()
@@ -42,15 +43,45 @@ class GPS:
         self.logger.warning(f"Timeout waiting for '{expected_response}' after {timeout}s")
         return False
 
-    def send_command(self, command, expected_response=None, timeout=5):
-        try:
-            self.serial.write((command + '\r\n').encode('utf-8'))
-            if expected_response:
-                return self.wait_for_response(expected_response, timeout)
-            return True
-        except Exception as e:
-            self.logger.error(f"Command: {command}, Error: {e}")
-            return False
+    def send_command(self, command, expected_response=None, timeout=5, retry=0):
+        """Send AT command with optional retry"""
+        full_response = ""
+        success = False
+        
+        for attempt in range(retry + 1):
+            try:
+                self.logger.debug(f"Sending: {command}{' (retry ' + str(attempt) + ')' if attempt > 0 else ''}")
+                self.serial.write((command + '\r\n').encode('utf-8'))
+                
+                if not expected_response:
+                    time.sleep(0.1)  # Brief delay for commands without expected response
+                    return True
+                    
+                # Wait for expected response
+                start_time = time.time()
+                response = ""
+                
+                while time.time() - start_time < timeout:
+                    if self.serial.in_waiting:
+                        chunk = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
+                        response += chunk
+                        full_response += chunk
+                        
+                        if expected_response in response:
+                            self.logger.debug(f"Received: {response.strip()}")
+                            return True
+                    time.sleep(0.01)
+                
+                self.logger.debug(f"Timeout waiting for '{expected_response}', got: {response.strip()}")
+                
+                # If this is not the last attempt, wait before retrying
+                if attempt < retry:
+                    time.sleep(1)
+            except Exception as e:
+                self.logger.error(f"Command: {command}, Error: {e}")
+                time.sleep(1)
+                
+        return False
 
     def initialize(self):
         try:
@@ -66,7 +97,7 @@ class GPS:
         self.logger.debug(f"GNSS power check response: {response}")
         if "+CGNSSPWR: 1" not in response:
             # Power on GNSS
-            if not self.send_command("AT+CGNSSPWR=1", "+CGNSSPWR: READY!", timeout=30):
+            if not self.send_command("AT+CGNSSPWR=1", "+CGNSSPWR: READY!", timeout=30, retry=2):
                 self.logger.error("Failed to power on GNSS")
                 return False
             self.logger.info("GNSS powered on successfully")
@@ -77,33 +108,38 @@ class GPS:
             self.logger.info("GNSS already powered on")
 
         # Configure GNSS Mode to enable all satellite systems
+        # From test results, we found CGNSSMODE is the correct command for this module
         self.logger.info("Configuring GNSS to use all satellite systems")
-        if not self.send_command("AT+CGNSMODE=1,1,1,1", "OK", timeout=5):
-            self.logger.warning("Failed to configure GNSS mode, continuing with default mode")
-        
-        # Check if AGPS is enabled
-        self.serial.write(b'AT+CAGPS?\r\n')
-        response = self.read_response(timeout=2)
-        self.logger.debug(f"AGPS check response: {response}")
-        if "+CAGPS: 1" not in response:
-            # Attempt to enable AGPS with exactly 'AT+CAGPS' command
-            self.logger.info("Enabling AGPS...")
-            self.serial.write(b'AT+CAGPS\r\n')
+        try:
+            self.serial.write(b'AT+CGNSSMODE?\r\n')
+            response = self.read_response(timeout=2)
+            self.logger.debug(f"GNSS mode check response: {response}")
             
-            # Wait for the specified AGPS delay before checking for success
-            self.logger.debug(f"Waiting for {self.agps_delay} seconds before checking for AGPS success...")
-            time.sleep(self.agps_delay)
-            
-            # Now check for success response
-            response = self.read_response(timeout=10)
-            if "+AGPS: success" in response:
-                self.logger.info("AGPS enabled successfully")
+            # Mode 3 typically means GPS+GLONASS+BEIDOU, which is good
+            if "+CGNSSMODE: 3" in response:
+                self.logger.info("GNSS already configured to use multiple satellite systems (mode 3)")
             else:
-                self.logger.warning(f"Failed to enable AGPS, continuing without AGPS. Response: {response}")
+                self.logger.info("Setting GNSS mode to 3 (GPS+GLONASS+BEIDOU)")
+                self.send_command("AT+CGNSSMODE=3", "OK", timeout=2)
+        except Exception as e:
+            self.logger.warning(f"Failed to configure GNSS mode: {e}, continuing with default mode")
+        
+        # Enable AGPS directly without checking status first
+        self.logger.info("Enabling AGPS...")
+        self.serial.write(b'AT+CAGPS\r\n')
+        
+        # Wait for the specified AGPS delay before continuing
+        self.logger.info(f"Waiting {self.agps_delay} seconds for AGPS to initialize...")
+        time.sleep(self.agps_delay)
+        
+        # Read any response but don't require success message
+        response = self.read_response(timeout=2)
+        if "+AGPS: success" in response:
+            self.logger.info("AGPS enabled successfully")
         else:
-            self.logger.info("AGPS already enabled")
+            self.logger.info("Continuing after AGPS command (success status unknown)")
 
-        # Check if we have a GPS fix
+        # Initial check for GPS fix - may not have fix yet
         self.check_gps_fix()
         
         self.logger.info("GPS initialized successfully")
@@ -123,17 +159,26 @@ class GPS:
             self.logger.debug("Checking for GPS fix...")
             self.serial.write(b'AT+CGNSSINFO\r\n')
             response = self.read_response()
+            self.logger.debug(f"CGNSSINFO response: {response}")
             
             # Look for CGNSSINFO response with non-empty lat/lon fields
             if "+CGNSSINFO: " in response:
                 fields = response.split(': ')[1].split(',')
+                
+                # Update satellites count if available
+                if len(fields) > 1 and fields[1]:
+                    try:
+                        self.satellites = int(fields[1])
+                    except ValueError:
+                        pass
+                
                 # For this device, latitude is at index 5, longitude at index 7
                 if len(fields) >= 9 and fields[5] and fields[7]:
                     self.has_fix = True
-                    self.logger.info("GPS has acquired a fix")
+                    self.logger.info(f"GPS has acquired a fix (satellites: {self.satellites})")
                 else:
                     self.has_fix = False
-                    self.logger.debug("GPS has not yet acquired a fix (missing lat/lon)")
+                    self.logger.debug(f"GPS has not yet acquired a fix (satellites: {self.satellites}, missing lat/lon)")
             else:
                 self.has_fix = False
                 self.logger.debug("GPS has not yet acquired a fix (invalid response)")
@@ -147,16 +192,17 @@ class GPS:
         try:
             # First check if we have a fix
             if not self.check_gps_fix():
-                self.logger.warning("No GPS fix yet, still waiting for satellite acquisition")
+                self.logger.warning(f"No GPS fix yet, waiting for satellite acquisition (visible satellites: {self.satellites})")
                 return None
                 
             self.serial.write(b'AT+CGNSSINFO\r\n')
             response = self.read_response()
             self.logger.debug(f"CGNSSINFO response: {response}")
 
-            # Example from minicom: +CGNSSINFO: 3,17,,12,09,14.6192493,N,121.1041031,E,120525,101533.00,77.1,0.000,6
-            # Position in response array:           0  1  2  3  4  5          6  7          8  9      10        11   12    13
-            # Lat is field 5, lat dir is field 6, lon is field 7, lon dir is field 8, speed is field 12
+            # Format observed in working diagnostic:
+            # +CGNSSINFO: 3,17,,09,10,14.6198673,N,121.1038513,E,120525,112149.00,78.0,0.000,15.78,1.91,0.95,1.6
+            # Position in array:           0  1  2  3  4  5          6  7          8  9      10        11   12    13+
+            # Lat is field 5, lat dir is field 6, lon is field 7, lon dir is field 8, alt is field 11, speed is field 12
 
             if "+CGNSSINFO: " not in response:
                 self.logger.warning(f"Invalid CGNSSINFO response: {response}")
@@ -167,9 +213,8 @@ class GPS:
             fields = response.split(': ')[1].split(',')
             self.logger.debug(f"Parsed CGNSSINFO fields: {fields}")
             
-            # For this specific device, we're expecting a format with at least 13 fields
-            # for a valid reading (lat, lat_dir, lon, lon_dir, etc.)
-            if len(fields) < 13:
+            # Based on successful diagnostic, we need at least 9 fields for lat/lon
+            if len(fields) < 9:
                 self.logger.warning(f"Incomplete CGNSSINFO response: {response}")
                 self.has_fix = False
                 return None
@@ -182,6 +227,13 @@ class GPS:
                     self.has_fix = False
                     return None
                 
+                # Update satellites count
+                if fields[1]:
+                    try:
+                        self.satellites = int(fields[1])
+                    except ValueError:
+                        pass
+                
                 # Parse latitude (index 5) and direction (index 6)
                 latitude = float(fields[5]) if fields[5] else None
                 if fields[6] == 'S' and latitude is not None:
@@ -192,17 +244,40 @@ class GPS:
                 if fields[8] == 'W' and longitude is not None:
                     longitude = -longitude
                 
+                # Parse altitude (index 11)
+                altitude = None
+                if len(fields) > 11 and fields[11]:
+                    try:
+                        altitude = float(fields[11])
+                    except ValueError:
+                        pass
+                
                 # Parse speed (index 12)
-                speed = float(fields[12]) if len(fields) > 12 and fields[12] else 0.0
+                speed = None
+                if len(fields) > 12 and fields[12]:
+                    try:
+                        speed = float(fields[12])
+                    except ValueError:
+                        speed = 0.0
+                
+                if speed is None:
+                    speed = 0.0
 
                 # Log successful GPS data retrieval
-                self.logger.info(f"GPS data: lat={latitude}, lon={longitude}, speed={speed}")
+                self.logger.info(f"GPS data: lat={latitude}, lon={longitude}, alt={altitude}, speed={speed}, satellites={self.satellites}")
                 
-                return {
+                result = {
                     "latitude": latitude,
                     "longitude": longitude,
-                    "speed": speed
+                    "speed": speed,
+                    "satellites": self.satellites
                 }
+                
+                if altitude is not None:
+                    result["altitude"] = altitude
+                    
+                return result
+                
             except ValueError as e:
                 self.logger.error(f"Error parsing CGNSSINFO: {e}")
                 return None

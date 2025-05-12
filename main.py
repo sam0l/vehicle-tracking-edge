@@ -84,19 +84,33 @@ class VehicleTracker:
         while attempt < max_retries:
             attempt += 1
             self.logger.info(f"Initialization attempt {attempt}/{max_retries}")
+            
+            # Initialize GPS first with longer timeout for AGPS initialization
+            gps_init = self.gps.initialize()
+            if not gps_init:
+                self.logger.error("GPS initialization failed")
+                if attempt < max_retries:
+                    self.logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                continue
+                
+            # Initialize other components
             results = {
-                'gps': self.gps.initialize(),
+                'gps': gps_init,
                 'imu': self.imu.initialize(),
                 'camera': self.camera.initialize()
             }
             self.camera_initialized = results['camera']
+            
             if results['gps'] and results['imu']:  # Camera is optional
                 self.logger.info(f"Core components initialized successfully (IMU address: 0x{self.imu.address:02x}, Camera: {self.camera_initialized})")
                 return True
+                
             self.logger.error(f"Initialization failed: {results}")
             if attempt < max_retries:
                 self.logger.info(f"Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
+                
         self.logger.error("Max initialization retries reached, giving up")
         return False
 
@@ -123,6 +137,7 @@ class VehicleTracker:
                 try:
                     # Send telemetry data (GPS)
                     if data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"):
+                        # Create basic telemetry data
                         telemetry_data = {
                             "latitude": data["gps"]["latitude"],
                             "longitude": data["gps"]["longitude"],
@@ -130,6 +145,13 @@ class VehicleTracker:
                             "timestamp": timestamp,
                             "connection_status": self.check_connectivity()
                         }
+                        
+                        # Add additional GPS data if available
+                        if "satellites" in data["gps"]:
+                            telemetry_data["satellites"] = data["gps"]["satellites"]
+                        if "altitude" in data["gps"]:
+                            telemetry_data["altitude"] = data["gps"]["altitude"]
+                            
                         payload_bytes = len(json.dumps(telemetry_data).encode('utf-8'))
                         self.logger.debug(f"Sending telemetry data (size: {payload_bytes} bytes): {telemetry_data}")
                         response = requests.post(url, json=telemetry_data, timeout=30)
@@ -282,6 +304,9 @@ class VehicleTracker:
 
         last_gps = last_imu = last_camera = last_camera_init = 0
         camera_init_interval = 30  # Retry camera every 30 seconds if failed
+        consecutive_gps_failures = 0
+        max_gps_failures = 10  # After this many consecutive failures, try to reinitialize GPS
+        
         try:
             while True:
                 current_time = time.time()
@@ -294,10 +319,26 @@ class VehicleTracker:
                         gps_data = self.gps.get_data()
                         if gps_data:
                             data.update({"gps": gps_data})
+                            consecutive_gps_failures = 0  # Reset failure counter on success
+                            
+                            # Log GPS fix details
+                            satellites = gps_data.get("satellites", 0)
+                            self.logger.info(f"GPS fix acquired: {gps_data['latitude']},{gps_data['longitude']} (satellites: {satellites})")
                         else:
-                            self.logger.warning("No valid GPS data received")
+                            self.logger.warning(f"No valid GPS data received (satellites visible: {self.gps.satellites})")
+                            consecutive_gps_failures += 1
+                            
+                            # If we've had too many consecutive failures, try to reinitialize GPS
+                            if consecutive_gps_failures >= max_gps_failures:
+                                self.logger.warning(f"Too many consecutive GPS failures ({consecutive_gps_failures}), reinitializing GPS...")
+                                try:
+                                    self.gps.initialize()
+                                    consecutive_gps_failures = 0
+                                except Exception as e:
+                                    self.logger.error(f"Failed to reinitialize GPS: {e}")
                     except Exception as e:
                         self.logger.error(f"GPS error: {e}")
+                        consecutive_gps_failures += 1
                     last_gps = current_time
 
                 # IMU data
