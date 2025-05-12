@@ -198,13 +198,18 @@ class IMU:
         avg_y = accel_y_sum / count
         avg_z = accel_z_sum / count
         
-        # Set bias values for x and y axes (assuming device is aligned with gravity along z-axis)
+        # Set bias values for all three axes
         self.accel_bias[0] = avg_x
         self.accel_bias[1] = avg_y
-        self.accel_bias[2] = 0  # For Z, we don't remove bias since it includes gravity
+        self.accel_bias[2] = avg_z
         
         # Calculate gravity norm (magnitude of acceleration vector)
         self.gravity_norm = math.sqrt(avg_x**2 + avg_y**2 + avg_z**2)
+        
+        # Update motion thresholds based on calibration
+        # From calibration data, we see we need more sensitive thresholds
+        self.motion_threshold = max(0.03, 5 * 0.000405)  # 5 * stdev from calibration
+        self.stationary_threshold = 0.01  # Lower threshold for stationary state
         
         self.logger.info(f"Calibration complete: bias=[{avg_x:.4f}, {avg_y:.4f}, {avg_z:.4f}], gravity_norm={self.gravity_norm:.4f}")
 
@@ -273,14 +278,15 @@ class IMU:
         
         # If GPS speed is recent (<5s), use it
         if self.last_gps_time and (current_time - self.last_gps_time) < 5:
-            return self.current_speed
+            # Round to 2 decimal places
+            return round(self.current_speed, 2)
             
         # Check if we've been stationary for a while
         if self.is_stationary:
             return 0.0
             
         # Otherwise, fallback to IMU speed estimate
-        return self.current_speed
+        return round(self.current_speed, 2)
 
     def get_position(self):
         """
@@ -298,7 +304,7 @@ class IMU:
             
         # Otherwise, use dead reckoning
         if self.imu_position and self.current_speed > 0:
-            dt = current_time - (self.last_update_time or current_time)
+            dt = current_time - self.last_update_time
             # Use last known heading (degrees)
             heading_rad = math.radians(self.current_heading)
             # Distance moved in meters
@@ -321,7 +327,9 @@ class IMU:
         Read data from the IMU, handling address changes if needed. Also update speed estimate by integrating acceleration.
         """
         current_time = time.time()
-        dt = max(0.001, current_time - (self.last_update_time or current_time))  # Prevent division by zero
+        dt = current_time - self.last_update_time
+        if dt <= 0:
+            dt = 0.01  # Prevent division by zero with a reasonable default
         
         if current_time - self.last_address_check >= self.address_check_interval:
             if not self._verify_address():
@@ -355,6 +363,8 @@ class IMU:
                 total_accel = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
                 
                 # Adjust for gravity (should be close to 0 when stationary)
+                # Note from calibration data: gravity_norm is around 0.055g instead of 1.0g 
+                # This indicates scale might be off in the ICM20689
                 adjusted_accel = abs(total_accel - self.gravity_norm)
                 
                 # Apply low-pass filter to smooth acceleration readings
@@ -366,21 +376,21 @@ class IMU:
                     self.consecutive_stationary_samples += 1
                     
                     # After several consecutive low readings, confirm stationary state
-                    if self.consecutive_stationary_samples >= 10:  # About 0.1s at 100Hz
+                    # Increase threshold for consecutive samples (from 10 to 15)
+                    if self.consecutive_stationary_samples >= 15:
                         if not self.is_stationary:
                             self.logger.debug(f"Device is now stationary (accel={self.filtered_accel:.4f}g)")
                         self.is_stationary = True
                         
                         # When stationary, aggressively reduce speed to zero
-                        self.current_speed = max(0, self.current_speed - 0.5 * dt)
-                        if self.current_speed < 0.1:  # Below 0.1 m/s (0.36 km/h)
-                            self.current_speed = 0.0
+                        self.current_speed = 0.0  # Force to zero immediately when stationary is confirmed
                 else:
                     # Above the threshold - potential movement detected
                     self.consecutive_stationary_samples = 0
                     
                     # Only transition to moving state if above motion threshold
-                    if self.filtered_accel > self.motion_threshold:
+                    # Increase motion threshold to prevent false positives
+                    if self.filtered_accel > max(self.motion_threshold, 0.05):
                         if self.is_stationary:
                             self.logger.debug(f"Device is now moving (accel={self.filtered_accel:.4f}g)")
                         self.is_stationary = False
@@ -390,11 +400,11 @@ class IMU:
                         accel_ms2 = self.filtered_accel * 9.81  # Convert g to m/s²
                         self.current_speed += accel_ms2 * dt
                         
-                        # Apply dampening to prevent drift in speed estimation
-                        self.current_speed *= (1.0 - 0.05 * dt)  # 5% decay per second
+                        # Apply more aggressive dampening to prevent drift
+                        self.current_speed *= (1.0 - 0.15 * dt)  # 15% decay per second (up from 5%)
                 
-                # Limit maximum speed to reasonable values
-                self.current_speed = min(33.3, max(0, self.current_speed))  # 0-120 km/h
+                # Limit maximum speed to reasonable values and ensure minimum is 0
+                self.current_speed = min(33.3, max(0, self.current_speed))
                 
                 # Update heading from gyro_z (yaw rate, deg/s)
                 self.current_heading += gyro_z * dt
@@ -410,11 +420,11 @@ class IMU:
                 "gyro_x": gyro_x,    # deg/s
                 "gyro_y": gyro_y,
                 "gyro_z": gyro_z,
-                "speed": self.get_speed(),
+                "speed": round(self.get_speed(), 2),  # Round to 2 decimal places
                 "position": self.get_position(),
-                "heading": self.current_heading,
+                "heading": round(self.current_heading, 2),  # Round to 2 decimal places
                 "is_stationary": self.is_stationary,
-                "filtered_accel": self.filtered_accel
+                "filtered_accel": round(self.filtered_accel, 4)
             }
             
             return result

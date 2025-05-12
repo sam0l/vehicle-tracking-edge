@@ -71,16 +71,14 @@ class VehicleTracker:
         
         # Keep track of last telemetry update to optimize real-time map updates
         self.last_telemetry_send_time = 0
-        self.telemetry_interval = 3  # Send telemetry every 3 seconds to update map
-        
-        # Current speed in m/s, calculated from GPS and IMU
-        self.current_speed = 0.0
+        self.telemetry_interval = 1.0  # Send telemetry updates every 1 second
         
         # Speed calculation parameters
-        self.speed_alpha = 0.8  # Weight factor for GPS speed (1-alpha for IMU)
-        self.use_imu_speed = False  # Flag to indicate if IMU speed should be used
-        self.last_speed_update = 0
-        self.max_speed_age = 10  # Maximum age for speed data in seconds
+        self.current_speed = 0.0
+        self.speed_alpha = 0.8  # Weight for GPS in combined speed calculation (0.8 GPS, 0.2 IMU)
+        self.use_imu_speed = False
+        self.last_speed_update = time.time()  # Initialize to current time instead of 0
+        self.max_speed_age = 30  # Maximum age for speed data in seconds (increased from 10s)
 
     def setup_logging(self):
         logging.basicConfig(
@@ -172,17 +170,13 @@ class VehicleTracker:
             
         # If GPS speed is not available but IMU speed is, use IMU
         elif imu_data and 'speed' in imu_data:
-            # Check if IMU speed is still valid (not too old)
-            if current_time - self.last_speed_update < self.max_speed_age:
-                self.use_imu_speed = True
-                self.current_speed = imu_data['speed']
-                self.logger.debug(f"Speed calculation: using IMU speed: {self.current_speed:.2f}")
-                return self.current_speed
-            else:
-                # IMU speed data is too old, but still better than nothing
-                self.logger.warning(f"Using outdated IMU speed data ({current_time - self.last_speed_update:.1f}s old)")
-                self.current_speed = imu_data['speed']
-                return self.current_speed
+            # Always update last_speed_update when we receive fresh IMU data
+            self.last_speed_update = current_time
+            
+            self.use_imu_speed = True
+            self.current_speed = imu_data['speed']
+            self.logger.debug(f"Speed calculation: using IMU speed: {self.current_speed:.2f}")
+            return self.current_speed
             
         # If neither is available, return the last known speed
         self.logger.debug(f"Speed calculation: no new data, using last speed: {self.current_speed:.2f}")

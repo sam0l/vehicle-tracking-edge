@@ -8,7 +8,7 @@ yolo:
   confidence_threshold: 0.7
   imgsz: 640
   iou_threshold: 0.45
-  send_images: false
+  send_images: true
   allow_detections_without_gps: true  # Allow detections to be sent even when GPS is unavailable
   class_names:
     - Green Light
@@ -26,7 +26,7 @@ yolo:
     - Speed Limit 80
     - Speed Limit 90
     - Stop
-  intra_op_num_threads: 8
+  intra_op_num_threads: 4
   draw_boxes: true
 gps:
   port: "/dev/ttyUSB1"
