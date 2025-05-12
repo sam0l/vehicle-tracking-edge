@@ -72,8 +72,8 @@ def get_system_temperatures():
         
         # Regex to find temperature lines (e.g., "temp1: +43.5 C")
         # It captures the thermal zone name (e.g., 'soc_thermal', 'gpu_thermal') and the temp value
-        # Adjusted regex to better capture the thermal zone identifier
-        pattern = re.compile(r"^([a-zA-Z0-9_]+)-virtual-[0-9]+\n(?:.+\n)*?temp1:\s+\+?([0-9.]+)\s*C", re.MULTILINE)
+        # Adjusted regex to better capture the thermal zone identifier and handle °C
+        pattern = re.compile(r"^([a-zA-Z0-9_]+)-virtual-[0-9]+\n(?:.+\n)*?temp1:\s+\+?([0-9.]+)\s*°?C", re.MULTILINE)
         
         matches = pattern.findall(output)
         print(f"[DEBUG REGEX MATCHES (primary)]: {matches}") # DEBUG PRINT
@@ -86,7 +86,8 @@ def get_system_temperatures():
         # Fallback for specific format if the general one fails
         # Example: soc_thermal-virtual-0, temp1: +43.5 C
         if not temps:
-             fallback_pattern = re.compile(r"^(\w+_thermal)-virtual-0\s*\nAdapter: Virtual device\s*\ntemp1:\s*\+([0-9.]+)\s*C", re.MULTILINE)
+             # Adjusted fallback regex to handle °C
+             fallback_pattern = re.compile(r"^(\w+_thermal)-virtual-0\s*\nAdapter: Virtual device\s*\ntemp1:\s*\+([0-9.]+)\s*°?C", re.MULTILINE)
              fallback_matches = fallback_pattern.findall(output)
              print(f"[DEBUG REGEX MATCHES (fallback)]: {fallback_matches}") # DEBUG PRINT
              for name, temp_str in fallback_matches:
