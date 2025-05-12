@@ -54,11 +54,6 @@ class IMUCalibration:
         self.total_accel_buffer = deque(maxlen=50)
         self.speed_buffer = deque(maxlen=100)
         
-        # Calibration values
-        self.accel_bias = [0, 0, 0]  # Bias in x, y, z
-        self.gravity_norm = 1.0  # Expected gravity norm (should be close to 1g)
-        self.accel_stdev = 0.0  # Standard deviation of acceleration when stationary
-        
         # Parameters that might need tuning
         self.motion_threshold = 0.03  # Threshold for detecting motion (g)
         self.alpha = 0.2  # Low-pass filter coefficient (0-1)
@@ -100,50 +95,76 @@ class IMUCalibration:
         # Wait a moment for the device to settle
         time.sleep(1.0)
         
-        # Collect samples
-        accel_x_samples = []
-        accel_y_samples = []
-        accel_z_samples = []
-        accel_total_samples = []
+        # Use the built-in IMU calibration routine
+        logger.info("Using IMU's built-in calibration routine...")
+        try:
+            # Call the IMU calibration routine
+            self.imu.calibrate_stationary()
+            
+            # Get the calibration values from the IMU
+            self.accel_bias = self.imu.accel_bias
+            self.gravity_norm = self.imu.gravity_norm
+            self.motion_threshold = self.imu.motion_threshold
+            
+            logger.info("\nCalibration Results:")
+            logger.info(f"Accel Bias (x,y,z): ({self.accel_bias[0]:.6f}, {self.accel_bias[1]:.6f}, {self.accel_bias[2]:.6f})g")
+            logger.info(f"Gravity Norm: {self.gravity_norm:.6f}g (should be close to 1.0)")
+            logger.info(f"Motion Threshold: {self.motion_threshold:.6f}g")
+            logger.info(f"Stationary Threshold: {self.imu.stationary_threshold:.6f}g")
+            
+            return True
         
-        logger.info(f"Collecting {STATIONARY_SAMPLES} samples...")
-        for i in range(STATIONARY_SAMPLES):
-            data = self.imu.read_data()
-            if data:
-                accel_x_samples.append(data["accel_x"])
-                accel_y_samples.append(data["accel_y"])
-                accel_z_samples.append(data["accel_z"])
-                
-                # Calculate the total acceleration magnitude
-                total_accel = math.sqrt(data["accel_x"]**2 + data["accel_y"]**2 + data["accel_z"]**2)
-                accel_total_samples.append(total_accel)
-                
-                if i % 10 == 0:
-                    logger.info(f"Sample {i+1}/{STATIONARY_SAMPLES} - x={data['accel_x']:.4f}g, y={data['accel_y']:.4f}g, z={data['accel_z']:.4f}g, total={total_accel:.4f}g")
-                
-                time.sleep(CALIBRATION_DELAY)
-            else:
-                logger.warning("Failed to read IMU data, retrying...")
-                time.sleep(0.1)
-                i -= 1  # Try again
-        
-        # Calculate statistics
-        self.accel_bias[0] = np.mean(accel_x_samples)
-        self.accel_bias[1] = np.mean(accel_y_samples)
-        self.accel_bias[2] = np.mean(accel_z_samples)
-        self.gravity_norm = np.mean(accel_total_samples)
-        self.accel_stdev = np.std(accel_total_samples)
-        
-        # Set motion threshold based on standard deviation
-        self.motion_threshold = max(0.03, 3 * self.accel_stdev)
-        
-        logger.info("\nCalibration Results:")
-        logger.info(f"Accel Bias (x,y,z): ({self.accel_bias[0]:.6f}, {self.accel_bias[1]:.6f}, {self.accel_bias[2]:.6f})g")
-        logger.info(f"Gravity Norm: {self.gravity_norm:.6f}g (should be close to 1.0)")
-        logger.info(f"Accel StdDev: {self.accel_stdev:.6f}g")
-        logger.info(f"Motion Threshold: {self.motion_threshold:.6f}g (3σ)")
-        
-        return True
+        except Exception as e:
+            logger.error(f"Error during IMU calibration: {e}")
+            
+            # Fallback to manual calibration
+            logger.info("Falling back to manual calibration...")
+            
+            # Collect samples
+            accel_x_samples = []
+            accel_y_samples = []
+            accel_z_samples = []
+            accel_total_samples = []
+            
+            logger.info(f"Collecting {STATIONARY_SAMPLES} samples...")
+            for i in range(STATIONARY_SAMPLES):
+                data = self.imu.read_data()
+                if data:
+                    accel_x_samples.append(data["accel_x"])
+                    accel_y_samples.append(data["accel_y"])
+                    accel_z_samples.append(data["accel_z"])
+                    
+                    # Calculate the total acceleration magnitude
+                    total_accel = math.sqrt(data["accel_x"]**2 + data["accel_y"]**2 + data["accel_z"]**2)
+                    accel_total_samples.append(total_accel)
+                    
+                    if i % 10 == 0:
+                        logger.info(f"Sample {i+1}/{STATIONARY_SAMPLES} - x={data['accel_x']:.4f}g, y={data['accel_y']:.4f}g, z={data['accel_z']:.4f}g, total={total_accel:.4f}g")
+                    
+                    time.sleep(CALIBRATION_DELAY)
+                else:
+                    logger.warning("Failed to read IMU data, retrying...")
+                    time.sleep(0.1)
+                    i -= 1  # Try again
+            
+            # Calculate statistics
+            mean_x = np.mean(accel_x_samples)
+            mean_y = np.mean(accel_y_samples)
+            mean_z = np.mean(accel_z_samples)
+            self.accel_bias = np.array([mean_x, mean_y, mean_z])
+            self.gravity_norm = np.mean(accel_total_samples)
+            accel_stdev = np.std(accel_total_samples)
+            
+            # Set motion threshold based on standard deviation
+            self.motion_threshold = max(0.03, 3 * accel_stdev)
+            
+            logger.info("\nManual Calibration Results:")
+            logger.info(f"Accel Bias (x,y,z): ({mean_x:.6f}, {mean_y:.6f}, {mean_z:.6f})g")
+            logger.info(f"Gravity Norm: {self.gravity_norm:.6f}g (should be close to 1.0)")
+            logger.info(f"Accel StdDev: {accel_stdev:.6f}g")
+            logger.info(f"Motion Threshold: {self.motion_threshold:.6f}g (3σ)")
+            
+            return True
     
     def run_speed_test(self, duration=30):
         """Run a test of speed estimation algorithms for the specified duration."""
