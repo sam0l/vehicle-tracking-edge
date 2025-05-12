@@ -930,3 +930,38 @@ class IMU:
         # Update derived values
         self.current_speed = math.sqrt(self.kf_state[2]**2 + self.kf_state[3]**2)
         self.current_heading = self.kf_state[6]
+
+    def initialize(self):
+        """Initialize the IMU, scanning for valid addresses and setting up the device."""
+        self.initialization_attempts = 0
+        while self.initialization_attempts < self.max_init_attempts:
+            valid_addresses = self._scan_for_imu()
+            if not valid_addresses:
+                self.logger.error("No valid IMU addresses found")
+                self.initialization_attempts += 1
+                time.sleep(0.1)
+                continue
+
+            # Try each valid address
+            for addr in valid_addresses:
+                self.address = addr
+                if self._initialize_at_address():
+                    self.last_address_check = time.time()
+                    # Reset timestamp fields to prevent problems
+                    self.last_update_time = time.time()
+                    self.last_gps_time = 0  # Not None to prevent type errors
+                    self.last_motion_time = time.time()
+                    
+                    # Explicitly set initial state to stationary
+                    self.is_stationary = True
+                    self.current_speed = 0.0
+                    self.consecutive_stationary_samples = 20  # Initialize with enough samples to be considered stationary
+                    
+                    return True
+                self.logger.warning(f"Failed to initialize IMU at address 0x{addr:02x}")
+
+            self.initialization_attempts += 1
+            time.sleep(0.1)
+
+        self.logger.error("IMU initialization failed after maximum attempts")
+        return False
