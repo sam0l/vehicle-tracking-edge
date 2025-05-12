@@ -49,6 +49,16 @@ sim:
   dial_command: "ATD*99#"  # Standard dial command for most modems
   ppp_retry_interval: 300  # Try reconnecting PPP every 5 minutes if lost
   interfaces: ["ppp0", "wwan0"]  # Possible LTE interface names
+  modem_init_commands:  # Commands to initialize the modem at startup
+    - "AT+CFUN=1"  # Set full functionality mode
+    - "AT+CGATT=1"  # Attach to network
+    - "AT+CREG=1"  # Enable network registration notification
+  initialization_retries: 3  # Number of retries for modem initialization
+  connection_recovery: true  # Auto-recover when connection is lost
+  ppp_setup:
+    auto_connect: true  # Automatically try to connect PPP at startup
+    connection_script: "/usr/local/bin/lte-connect"  # Created by lte_connection_setup.sh
+    chat_script: "/etc/ppp/chat-lte"  # Created by lte_connection_setup.sh
 backend:
   url: "https://vehicle-tracking-backend-bwmz.onrender.com"
   endpoint_prefix: "/api"
