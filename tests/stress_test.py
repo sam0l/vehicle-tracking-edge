@@ -68,7 +68,7 @@ def get_system_temperatures():
         # Run the sensors command
         result = subprocess.run(['sensors'], capture_output=True, text=True, check=True, timeout=5)
         output = result.stdout
-        print(f"[DEBUG SENSORS OUTPUT]:\n---\n{output}\n---") # DEBUG PRINT
+        # print(f"[DEBUG SENSORS OUTPUT]:\n---\n{output}\n---") # DEBUG PRINT (now commented out)
         
         # Regex to find temperature lines (e.g., "temp1: +43.5 C")
         # It captures the thermal zone name (e.g., 'soc_thermal', 'gpu_thermal') and the temp value
@@ -76,7 +76,7 @@ def get_system_temperatures():
         pattern = re.compile(r"^([a-zA-Z0-9_]+)-virtual-[0-9]+\n(?:.+\n)*?temp1:\s+\+?([0-9.]+)\s*°?C", re.MULTILINE)
         
         matches = pattern.findall(output)
-        print(f"[DEBUG REGEX MATCHES (primary)]: {matches}") # DEBUG PRINT
+        # print(f"[DEBUG REGEX MATCHES (primary)]: {matches}") # DEBUG PRINT (now commented out)
         
         for match in matches:
             zone_name = match[0].replace('_thermal', '') # Simplify name (e.g., 'soc_thermal' -> 'soc')
@@ -89,7 +89,7 @@ def get_system_temperatures():
              # Adjusted fallback regex to handle °C
              fallback_pattern = re.compile(r"^(\w+_thermal)-virtual-0\s*\nAdapter: Virtual device\s*\ntemp1:\s*\+([0-9.]+)\s*°?C", re.MULTILINE)
              fallback_matches = fallback_pattern.findall(output)
-             print(f"[DEBUG REGEX MATCHES (fallback)]: {fallback_matches}") # DEBUG PRINT
+             # print(f"[DEBUG REGEX MATCHES (fallback)]: {fallback_matches}") # DEBUG PRINT (now commented out)
              for name, temp_str in fallback_matches:
                  key = name.replace('_thermal','')
                  temps[f'temp_{key}'] = float(temp_str)
@@ -111,9 +111,10 @@ def get_system_temperatures():
     except subprocess.CalledProcessError as e:
         print(f"[WARN] 'sensors' command failed: {e}")
     except Exception as e:
-        print(f"[ERROR] Unexpected error reading system temperatures: {e}")
+        # print(f"[ERROR] Unexpected error reading system temperatures: {e}") # Keep error for this important function? User wants no debug.
+        pass # Suppress for cleaner output, errors still go to CSV indirectly by None values
         
-    print(f"[DEBUG FINAL TEMPS DICT]: {temps}") # DEBUG PRINT
+    # print(f"[DEBUG FINAL TEMPS DICT]: {temps}") # DEBUG PRINT (now commented out)
     return temps
 
 # Early exit flag
