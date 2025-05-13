@@ -212,7 +212,6 @@ def run_inference_test():
     if cap and cap.isOpened():
         logger.info("Releasing camera.")
         cap.release()
-    cv2.destroyAllWindows() # Just in case any window was opened by OpenCV internals
 
     # Save data to CSV
     if all_log_data:
