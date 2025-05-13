@@ -286,6 +286,8 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
                 except Exception as imu_e:
                     # print(f"[ERROR] Error reading IMU data: {imu_e}")
                     imu_status = "NOT WORKING (Exception)"
+            # else: # If IMU not initialized
+                # imu_status = "NOT WORKING (Not Initialized)"
 
             # Update IMU counts
             total_counts["IMU"] += 1
@@ -358,14 +360,91 @@ def main(duration_seconds=duration_seconds, log_file="stress_test_log.csv", temp
 
             time.sleep(1)
 
-    # Suppress final uptime stats print
-    # print("\n[INFO] Test complete. Uptime summary:")
-    # for subsystem in subsystems:
-    #     up = up_counts[subsystem]
-    #     total = total_counts[subsystem]
-    #     down = total - up
-    #     uptime_percent = (up / total) * 100 if total else 0
-    #     print(f"{subsystem}: Uptime={up}s, Breakdown={down}s, Uptime%={uptime_percent:.2f}")
+    # Calculate and print uptime stats and average temperatures
+    print("\n[INFO] Test complete. Uptime summary:")
+    total_uptime_percentage_sum = 0
+    num_subsystems_for_avg = 0
+
+    for subsystem in subsystems:
+        up = up_counts[subsystem]
+        total = total_counts[subsystem]
+        # down = total - up # Not directly used in % calculation
+        uptime_percent = (up / total) * 100 if total > 0 else 0
+        print(f"{subsystem}: Uptime Samples={up}/{total}, Uptime Percentage={uptime_percent:.2f}%")
+        if total > 0: # Only include in average if it was tracked
+            total_uptime_percentage_sum += uptime_percent
+            num_subsystems_for_avg += 1
+    
+    if num_subsystems_for_avg > 0:
+        overall_avg_uptime_percent = total_uptime_percentage_sum / num_subsystems_for_avg
+        print(f"Overall Average Uptime: {overall_avg_uptime_percent:.2f}%")
+    else:
+        print("Overall Average Uptime: N/A (no subsystems tracked)")
+
+    # Calculate average temperatures from the log file
+    avg_imu_temp = None
+    avg_cpu_temp = None
+    imu_temp_sum = 0
+    imu_temp_count = 0
+    cpu_temp_sum = 0
+    cpu_temp_count = 0
+
+    try:
+        with open(temp_log_file, 'r', newline='') as f_temp:
+            reader = csv.reader(f_temp)
+            header = next(reader, None) # Skip header
+            if header:
+                imu_temp_col_index = -1
+                cpu_temp_col_index = -1
+                try:
+                    imu_temp_col_index = header.index('imu_temp_celsius')
+                    # Assuming system_temp_keys[1] is 'temp_center' or similar for CPU
+                    # This needs to align with how system_temp_keys is defined and used
+                    # For directness, let's assume 'temp_center' is the key for CPU temp
+                    cpu_temp_key_for_average = 'temp_center' # Make sure this key exists in system_temp_keys
+                    if cpu_temp_key_for_average in header:
+                         cpu_temp_col_index = header.index(cpu_temp_key_for_average)
+                    else:
+                        print(f"[WARN] CPU temp key '{cpu_temp_key_for_average}' not found in temperature log header for averaging.")
+
+                except ValueError:
+                    print("[WARN] Temperature log columns not found for averaging.")
+
+                if imu_temp_col_index != -1:
+                    for row in reader:
+                        try:
+                            if row[imu_temp_col_index]: # Check if not empty
+                                imu_val = float(row[imu_temp_col_index])
+                                imu_temp_sum += imu_val
+                                imu_temp_count += 1
+                        except (ValueError, IndexError):
+                            pass # Ignore rows with invalid IMU temp data
+                        
+                        if cpu_temp_col_index != -1:
+                            try:
+                                if row[cpu_temp_col_index]: # Check if not empty
+                                    cpu_val = float(row[cpu_temp_col_index])
+                                    cpu_temp_sum += cpu_val
+                                    cpu_temp_count += 1
+                            except (ValueError, IndexError):
+                                pass # Ignore rows with invalid CPU temp data
+                                
+        if imu_temp_count > 0:
+            avg_imu_temp = imu_temp_sum / imu_temp_count
+            print(f"Average IMU Temperature: {avg_imu_temp:.2f}°C")
+        else:
+            print("Average IMU Temperature: N/A (no data)")
+
+        if cpu_temp_count > 0:
+            avg_cpu_temp = cpu_temp_sum / cpu_temp_count
+            print(f"Average CPU Temperature (center): {avg_cpu_temp:.2f}°C")
+        else:
+            print("Average CPU Temperature (center): N/A (no data)")
+            
+    except FileNotFoundError:
+        print(f"[WARN] Temperature log file '{temp_log_file}' not found for calculating averages.")
+    except Exception as e:
+        print(f"[ERROR] Could not calculate average temperatures: {e}")
 
 if __name__ == "__main__":
     main() 
