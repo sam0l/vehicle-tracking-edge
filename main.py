@@ -14,7 +14,9 @@ from src.imu import IMU
 from src.camera import Camera
 from src.sign_detection import SignDetector
 from src.sim_monitor import SimMonitor
+from src.osm_speed_limit import get_speed_limit_for_location
 import threading
+import re
 
 
 class VehicleTracker:
@@ -97,6 +99,13 @@ class VehicleTracker:
         self.recent_detections = {}  # Dictionary to track recent detections
         self.detection_timeout = self.config.get('detection', {}).get('deduplication_timeout', 10.0)  # Time in seconds to ignore duplicate detections
         self.detection_distance_threshold = self.config.get('detection', {}).get('distance_threshold', 0.001)  # ~100m in lat/long units
+
+        # Speed limit related class names (from YOLO model config)
+        # This should ideally be loaded from the same yolo_config as SignDetector
+        # For now, define a placeholder or ensure it's in the main config.yaml
+        yolo_conf = self.config.get('yolo', {})
+        self.speed_limit_sign_class_names = yolo_conf.get('speed_limit_class_prefixes', ['speed_limit_', 'speed_']) # e.g. speed_limit_30, speed_50
+        self.all_sign_class_names = yolo_conf.get('class_names', []) # Full list of class names
 
     def setup_logging(self):
         logging.basicConfig(
@@ -359,6 +368,12 @@ class VehicleTracker:
                                 detection_data["dead_reckoning"] = True
                                 detection_data["position_source"] = "imu"
                                 detection_data["accuracy"] = "low"  # Dead reckoning has lower accuracy
+                            
+                            # Add current speed limit information if available
+                            if data.get("current_speed_limit") is not None:
+                                detection_data["current_road_speed_limit"] = data["current_speed_limit"]
+                            if data.get("speed_limit_source") is not None:
+                                detection_data["speed_limit_source"] = data["speed_limit_source"]
                                 
                             if image_base64:
                                 detection_data["image"] = image_base64
@@ -380,7 +395,7 @@ class VehicleTracker:
             self.logger.error("All retry attempts failed")
             return False
         except Exception as e:
-            self.logger.error(f"Unexpected error sending data: {e}")
+            self.logger.error(f"Unexpected error sending data: {e}", exc_info=True)
             return False
 
     def log_offline(self, data):
@@ -510,9 +525,10 @@ class VehicleTracker:
                     'position': position
                 }
                 
-        # Clean up old entries
+        # Clean up old entries from recent_detections
+        current_time_for_cleanup = time.time() # Use a consistent time for cleanup loop
         for key in list(self.recent_detections.keys()):
-            if current_time - self.recent_detections[key]['time'] > self.detection_timeout:
+            if current_time_for_cleanup - self.recent_detections[key]['time'] > self.detection_timeout:
                 self.logger.debug(f"Removing stale detection record for {key}")
                 del self.recent_detections[key]
                 
@@ -552,6 +568,7 @@ class VehicleTracker:
                 frame = None
                 gps_data = None
                 imu_data = None
+                signs = [] # Initialize signs list for the current iteration
                 
                 # Tracked failure states
                 gps_failure = False
@@ -654,6 +671,61 @@ class VehicleTracker:
                     elif "imu" in data and speed is not None:
                         data["imu"]["speed"] = speed
 
+                # Speed Limit Determination Logic
+                detected_speed_limit_value = None
+                osm_speed_limit_value = None
+                final_current_speed_limit = None
+                speed_limit_source = None
+
+                # 1. Process detected signs for speed limits
+                if signs: # signs would have been populated by camera processing block
+                    for sign_info in signs:
+                        parsed_speed = self._parse_speed_from_label(sign_info.get('label'))
+                        if parsed_speed is not None:
+                            detected_speed_limit_value = parsed_speed
+                            self.logger.info(f"Detected speed limit sign: {detected_speed_limit_value} from label '{sign_info.get('label')}'")
+                            break # Take the first detected speed limit sign
+                
+                # 2. Query OSM for speed limit if GPS is available
+                if gps_data and gps_data.get('latitude') and gps_data.get('longitude') and gps_data['latitude'] != 0.0:
+                    try:
+                        lat, lon = gps_data['latitude'], gps_data['longitude']
+                        osm_speed_str = get_speed_limit_for_location(lat, lon)
+                        if osm_speed_str:
+                            self.logger.info(f"OSM raw speed limit for {lat},{lon}: '{osm_speed_str}'")
+                            osm_speed_limit_value = self._parse_speed_from_osm_str(osm_speed_str)
+                            if osm_speed_limit_value is not None:
+                                self.logger.info(f"Parsed OSM speed limit: {osm_speed_limit_value}")
+                        else:
+                            self.logger.info(f"No speed limit found in OSM for {lat},{lon}.")
+                    except Exception as e:
+                        self.logger.error(f"Error querying or parsing OSM speed limit: {e}", exc_info=True)
+
+                # 3. Determine final_current_speed_limit
+                if osm_speed_limit_value is not None:
+                    # OSM data is available. This will be the primary candidate.
+                    final_current_speed_limit = osm_speed_limit_value
+                    speed_limit_source = "osm"
+                    if detected_speed_limit_value is not None:
+                        # Sign also detected.
+                        if osm_speed_limit_value != detected_speed_limit_value:
+                            # Conflict: OSM is already chosen, log warning.
+                            self.logger.warning(f"Speed limit mismatch: Detected sign={detected_speed_limit_value}, OSM={osm_speed_limit_value}. Prioritizing OSM.")
+                        else:
+                            # Sign detected and matches OSM. Log for info. OSM already chosen.
+                            self.logger.info(f"Speed limit verified: Detected sign={detected_speed_limit_value} (matches OSM={osm_speed_limit_value}). Using OSM value.")
+                            # speed_limit_source could be updated here if a more specific source is desired e.g. "osm_verified_by_sign"
+                elif detected_speed_limit_value is not None:
+                    # OSM is NOT available, but sign detection is.
+                    final_current_speed_limit = detected_speed_limit_value
+                    speed_limit_source = "sign_detection"
+                # else: both are None, final_current_speed_limit and speed_limit_source remain None
+                
+                if final_current_speed_limit is not None:
+                    data['current_speed_limit'] = final_current_speed_limit
+                    data['speed_limit_source'] = speed_limit_source
+                    self.logger.info(f"Final current speed limit set to: {final_current_speed_limit} (Source: {speed_limit_source})")
+
                 # Camera data and sign detection
                 if self.camera_initialized and current_time - last_camera >= self.config['logging']['interval']['camera']:
                     try:
@@ -700,13 +772,13 @@ class VehicleTracker:
                                          (data.get("gps") and data["gps"].get("latitude") and data["gps"].get("longitude"))):
                     should_send = True
                 
-                if should_send:
-                    if not self.send_data(data, frame if frame is not None else None):
+                if data.get("gps") or data.get("imu") or data.get("signs") or data.get("current_speed_limit") is not None:
+                    if self.check_connectivity():
+                        self.send_data(data, frame=frame) # Pass frame if available and needed
+                        self.send_offline_data() # Try to send any stored offline data
+                    else:
+                        self.logger.warning("No connectivity, logging data offline")
                         self.log_offline(data)
-                else:
-                    self.logger.debug("No valid data to send")
-
-                # Try to send any offline data
                 self.send_offline_data()
 
                 time.sleep(0.1)  # Small delay to prevent CPU overload
@@ -716,20 +788,58 @@ class VehicleTracker:
         finally:
             self.cleanup()
             
+    def _parse_speed_from_label(self, label_str: str) -> int | None:
+        if not label_str:
+            return None
+        # Try to find numbers in labels like "speed_limit_60", "speed60", "60"
+        # This regex looks for numbers at the end of a string, possibly preceded by "speed_limit_" or "speed_"
+        # It also considers if the label itself is just a number (e.g. class '60' for 60km/h sign)
+        match = re.search(r'(?:speed_limit_|speed_)?(\d+)$', label_str)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                self.logger.warning(f"Could not parse speed from label part: {match.group(1)} in {label_str}")
+                return None
+        if label_str.isdigit():
+            try:
+                return int(label_str)
+            except ValueError:
+                 pass # Should not happen
+        # Check against all known class names if they are purely numeric and represent speed
+        # This is a more robust way if class names are simply '30', '40', etc.
+        if label_str in self.all_sign_class_names and label_str.isdigit():
+            try:
+                return int(label_str)
+            except ValueError:
+                self.logger.warning(f"Could not parse presumably numeric class name '{label_str}' as speed.")
+
+        self.logger.debug(f"Label '{label_str}' not parsed as a direct speed limit value.")
+        return None
+
+    def _parse_speed_from_osm_str(self, osm_speed_str: str) -> int | None:
+        if not osm_speed_str:
+            return None
+        # OSM 'maxspeed' tag usually contains just the number for km/h, or "X mph" for mph.
+        match = re.match(r'^(\d+)(?:\s*(?:km/h|mph))?$', osm_speed_str.lower())
+        if match:
+            try:
+                speed_val = int(match.group(1))
+                return speed_val
+            except ValueError:
+                self.logger.warning(f"Could not parse speed from OSM string: {osm_speed_str}")
+                return None
+        self.logger.debug(f"OSM speed string '{osm_speed_str}' not parsed as a numerical speed.")
+        return None
+
     def cleanup(self):
-        """Clean up resources before shutdown."""
-        try:
-            if self.gps:
-                self.gps.close()
-            if self.imu:
-                self.imu.close()
-            if self.camera:
-                self.camera.close()
-            if self.sign_detector:
-                self.sign_detector.close()
-            self.logger.info("All resources cleaned up")
-        except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
+        # Clean up resources before shutdown.
+        self.logger.info("Cleaning up resources...")
+        if self.gps:
+            self.gps.close()
+        if self.camera and self.camera_initialized:
+            self.camera.release()
+        self.logger.info("Cleanup complete.")
 
 if __name__ == "__main__":
     tracker = VehicleTracker("config/config.yaml")
