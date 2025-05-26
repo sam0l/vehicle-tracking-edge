@@ -80,7 +80,7 @@ class SignDetector:
             try:
                 self.logger.info("Attempting to initialize Tengine (using .context.Context and .graph.Graph)...")
                 self.logger.debug(f"Tengine: Using model_path: {self.model_path}")
-                self.tengine_ctx = tg.context.Context()
+                self.tengine_ctx = tg.context.Context("") # Provide empty string for 'name' argument
                 self.logger.info("Tengine: Context created.")
                 
                 tengine_model_format = yolo_config.get('tengine_model_format', 'onnx') # Default to onnx if not specified
