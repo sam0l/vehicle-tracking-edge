@@ -54,7 +54,8 @@ def draw_boxes_on_image(img, boxes, class_ids, confidences, class_names):
 class SignDetector:
     def __init__(self, config_path='config/config.yaml'):
         self.logger = logging.getLogger(__name__)
-        self.logger.critical("--- SignDetector __init__ CALLED ---") # Prominent message
+        self.logger.setLevel(logging.DEBUG) # Explicitly set level for this logger
+        self.logger.critical("--- SignDetector __init__ CALLED (logger level set to DEBUG explicitly) ---")
         self.config = load_config(config_path)
         yolo_config = self.config['yolo']
         self.imgsz = yolo_config['imgsz']
