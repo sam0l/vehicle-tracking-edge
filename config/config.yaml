@@ -1,5 +1,5 @@
 camera:
-  device_id: "/dev/video1"
+  device_id: "/dev/video0"
   width: 640
   height: 360
   fps: 30
