@@ -431,7 +431,8 @@ class VehicleTracker:
 
     def post_data_usage_loop(self):
         interval = self.config['sim'].get('usage_post_interval', 30)
-        backend_url = f"{self.config['backend']['url']}/api/data-usage"
+        data_usage_endpoint_name = self.config['backend'].get('data_usage_endpoint', 'data-usage') # Default to 'data-usage' if not in config
+        backend_url = f"{self.config['backend']['url']}{self.config['backend']['endpoint_prefix']}{data_usage_endpoint_name}"
         last_post_time = time.time()
         last_bytes_sent = 0
         last_bytes_received = 0
@@ -458,10 +459,8 @@ class VehicleTracker:
                 last_bytes_sent = bytes_sent
                 last_bytes_received = bytes_received
                 response = requests.post(backend_url, json=payload, timeout=10)
-                if response.status_code == 200:
-                    self.logger.info(f"Posted data usage to backend: {payload}")
-                else:
-                    self.logger.warning(f"Failed to post data usage: {response.status_code} {response.text}")
+                response.raise_for_status() # Check for HTTP errors
+                self.logger.info(f"Posted data usage to backend: {payload}")
             except Exception as e:
                 self.logger.warning(f"Error posting data usage: {e}")
 
@@ -818,7 +817,7 @@ class VehicleTracker:
         self.logger.debug(f"Label '{label_str}' not parsed as a direct speed limit value.")
         return None
 
-    def _parse_speed_from_osm_str(self, osm_speed_str: str) -> int | None:
+    def _parse_speed_from_osm_str(self, osm_speed_str: str) -> Union[int, None]:
         if not osm_speed_str:
             return None
         # OSM 'maxspeed' tag usually contains just the number for km/h, or "X mph" for mph.

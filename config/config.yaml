@@ -80,6 +80,7 @@ backend:
   endpoint_prefix: "/api"
   detection_endpoint: "/detections"
   sim_data_endpoint: "/sim-data"
+  data_usage_endpoint: "/data-usage"
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

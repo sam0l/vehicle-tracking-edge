@@ -228,10 +228,11 @@ class SimMonitor:
             self.serial = None
             logger.info("Serial connection closed")
 
-def send_to_backend(balance_info, data_usage, network_info, signal_strength):
+def send_to_backend(backend_config, balance_info, data_usage, network_info, signal_strength):
     """Send SIM data to backend."""
     try:
-        url = "https://vehicle-tracking-backend-bwmz.onrender.com/api/sim-data"
+        sim_data_endpoint_name = backend_config.get('sim_data_endpoint', 'sim-data') # Default to 'sim-data'
+        url = f"{backend_config['url']}{backend_config['endpoint_prefix']}{sim_data_endpoint_name}"
         data = {
             "balance": balance_info,
             "data_usage": data_usage,
@@ -302,14 +303,16 @@ def sim_monitor_thread(config=None):
             network_info = monitor.get_network_info()
             signal_strength = monitor.get_signal_strength()
 
-            # Try to send data to backend
             if any([balance_info, data_usage, network_info, signal_strength]):
-                logger.info("Sending collected SIM data to backend...")
-                send_result = send_to_backend(balance_info, data_usage, network_info, signal_strength)
-                if not send_result:
-                    logger.warning("Failed to send data to backend")
+                logger.info("Collected SIM data, attempting to send to backend...")
+                if 'backend' in config and config['backend']:
+                    send_result = send_to_backend(config['backend'], balance_info, data_usage, network_info, signal_strength)
+                    if not send_result:
+                        logger.warning("Failed to send SIM data to backend. Check previous logs for details.")
+                else:
+                    logger.warning("Backend configuration ('backend') not found or is empty in config.yaml. Cannot send SIM data.")
             else:
-                logger.warning("No SIM data collected in this cycle")
+                logger.info("No new SIM data collected in this cycle to send to backend.")
 
             logger.info(f"Waiting {monitor.check_interval} seconds until next SIM data check...")
             time.sleep(monitor.check_interval)
