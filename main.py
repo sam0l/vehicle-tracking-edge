@@ -8,7 +8,6 @@ import cv2
 import base64
 import socket
 from datetime import datetime
-from flask import Flask, jsonify
 from src.gps import GPS
 from src.sgps import SGPS
 from src.imu import IMU
@@ -17,7 +16,6 @@ from src.sign_detection import SignDetector
 from src.sim_monitor import SimMonitor
 import threading
 
-app = Flask(__name__)
 
 class VehicleTracker:
     def __init__(self, config_path):
@@ -83,8 +81,6 @@ class VehicleTracker:
             usage_file=self.config['sim'].get('usage_file', 'data_usage.json'),
             interfaces=self.config['network'].get('interface', ["ppp0"])
         )
-        self.app = app  # Store Flask app as instance variable
-        self.setup_routes()
         
         # Keep track of last telemetry update to optimize real-time map updates
         self.last_telemetry_send_time = 0
@@ -417,15 +413,6 @@ class VehicleTracker:
         except Exception as e:
             self.logger.error(f"Failed to send SIM data: {e}")
 
-    def setup_routes(self):
-        @self.app.route('/api/data-usage')
-        def get_data_usage():
-            return jsonify({
-                '1d': self.sim_monitor.get_usage_stats('1d'),
-                '1w': self.sim_monitor.get_usage_stats('1w'),
-                '1m': self.sim_monitor.get_usage_stats('1m')
-            })
-
     def post_data_usage_loop(self):
         interval = self.config['sim'].get('usage_post_interval', 30)
         backend_url = f"{self.config['backend']['url']}/api/data-usage"
@@ -539,15 +526,6 @@ class VehicleTracker:
         if not self.initialize():
             self.logger.error("Initialization failed, exiting")
             return
-
-        # Start Flask in a separate thread
-        import threading
-        flask_thread = threading.Thread(target=self.app.run, kwargs={
-            'host': '0.0.0.0',
-            'port': self.config['api']['port']
-        })
-        flask_thread.daemon = True
-        flask_thread.start()
 
         # Start data usage posting thread
         usage_thread = threading.Thread(target=self.post_data_usage_loop)

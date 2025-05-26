@@ -122,7 +122,7 @@ class SGPS:
         except Exception as e:
             self.logger.error(f"Unexpected error parsing NMEA sentence: {sentence_str} - Error: {e}")
 
-    def read_data(self):
+    def get_data(self):
         """
         Read and process NMEA data from the GPS module.
         This method should be called periodically in a loop.
@@ -207,7 +207,7 @@ if __name__ == '__main__':
         try:
             start_time = time.time()
             while time.time() - start_time < 600: # Run for 10 minutes
-                data = sgps_module.read_data()
+                data = sgps_module.get_data()
                 if data:
                     if data['has_fix']:
                         print(f"Fix: Lat={data['latitude']:.6f}, Lon={data['longitude']:.6f}, Alt={data['altitude']:.1f}m, "
