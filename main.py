@@ -10,6 +10,7 @@ import socket
 from datetime import datetime
 from flask import Flask, jsonify
 from src.gps import GPS
+from src.sgps import SGPS
 from src.imu import IMU
 from src.camera import Camera
 from src.sign_detection import SignDetector
@@ -25,13 +26,29 @@ class VehicleTracker:
             self.config = yaml.safe_load(f)
         self.setup_logging()
         self.logger.info(f"Loaded config: {json.dumps(self.config, indent=2)}")
-        self.gps = GPS(
-            self.config['gps']['port'],
-            self.config['gps']['baudrate'],
-            self.config['gps']['timeout'],
-            self.config['gps']['power_delay'],
-            self.config['gps']['agps_delay']
-        )
+        gps_settings = self.config['gps_settings']
+        active_module = gps_settings['active_module']
+        self.logger.info(f"Active GPS module: {active_module}")
+
+        if active_module == 'gps':
+            gps_config = gps_settings['module_gps']
+            self.gps = GPS(
+                gps_config['port'],
+                gps_config['baudrate'],
+                gps_config['timeout'],
+                gps_config.get('power_delay', 2),  # Provide default if not present
+                gps_config.get('agps_delay', 5)   # Provide default if not present
+            )
+        elif active_module == 'sgps':
+            sgps_config = gps_settings['module_sgps']
+            self.gps = SGPS(
+                sgps_config['port'],
+                sgps_config['baudrate'],
+                sgps_config['timeout']
+            )
+        else:
+            self.logger.error(f"Invalid active_module '{active_module}' in gps_settings. Defaulting to no GPS.")
+            self.gps = None
         self.imu = IMU(
             self.config['imu']['i2c_bus'],
             i2c_addresses=self.config['imu']['i2c_addresses'],
@@ -102,7 +119,11 @@ class VehicleTracker:
             self.logger.info(f"Initialization attempt {attempt}/{max_retries}")
             
             # Initialize GPS first with longer timeout for AGPS initialization
-            gps_init = self.gps.initialize()
+            gps_init = False # Default to False
+            if self.gps:
+                gps_init = self.gps.initialize()
+            else:
+                self.logger.warning("GPS module is not configured or failed to initialize based on active_module setting.")
             if not gps_init:
                 self.logger.error("GPS initialization failed")
                 if attempt < max_retries:
@@ -118,7 +139,9 @@ class VehicleTracker:
             }
             self.camera_initialized = results['camera']
             
-            if results['gps'] and results['imu']:  # Camera is optional
+            # GPS is now initialized earlier and its status is in gps_init
+            # Camera is optional
+            if gps_init and results['imu']:
                 self.logger.info(f"Core components initialized successfully (IMU address: 0x{self.imu.address:02x}, Camera: {self.camera_initialized})")
                 return True
                 
