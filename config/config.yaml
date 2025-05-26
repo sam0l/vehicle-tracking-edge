@@ -33,6 +33,8 @@ yolo:
     - Stop
   intra_op_num_threads: 4
   draw_boxes: true
+  tengine_enable: true
+  tengine_model_format: "onnx"
 gps_settings:
   active_module: "sgps" # "sgps" or "gps"
 

@@ -9,10 +9,10 @@ import onnxruntime as ort
 from typing import Tuple, Union
 
 try:
-    import tengine.lite as tg
-    TENGINE_LITE_AVAILABLE = True
+    import tengine as tg
+    TENGINE_AVAILABLE = True
 except ImportError:
-    TENGINE_LITE_AVAILABLE = False
+    TENGINE_AVAILABLE = False
     tg = None
 
 logger = logging.getLogger(__name__)
@@ -64,46 +64,46 @@ class SignDetector:
         self.intra_op_num_threads = yolo_config.get('intra_op_num_threads', 4)
         self.draw_boxes = yolo_config.get('draw_boxes', False)
 
-        # Tengine Lite Initialization
-        self.tengine_lite_ctx = None
-        self.tengine_lite_graph = None
-        self.tengine_lite_input_tensor = None
-        self.tengine_lite_output_tensor = None # Assuming single output for now
-        self.use_tengine_lite = False
+        # Tengine Initialization
+        self.tengine_ctx = None
+        self.tengine_graph = None
+        self.tengine_input_tensor = None
+        self.tengine_output_tensor = None # Assuming single output for now
+        self.use_tengine = False
         self.model_path = yolo_config['model_path'] # Store for convenience
 
-        if TENGINE_LITE_AVAILABLE and yolo_config.get('tengine_lite_enable', False):
+        if TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
             try:
-                self.logger.info("Attempting to initialize Tengine Lite...")
-                self.tengine_lite_ctx = tg.Context()
+                self.logger.info("Attempting to initialize Tengine...")
+                self.tengine_ctx = tg.Context()
                 tengine_model_format = yolo_config.get('tengine_model_format', 'onnx') # Default to onnx if not specified
-                self.tengine_lite_graph = tg.Graph(self.tengine_lite_ctx, tengine_model_format, self.model_path)
+                self.tengine_graph = tg.Graph(self.tengine_ctx, tengine_model_format, self.model_path)
                 
-                self.tengine_lite_input_tensor = self.tengine_lite_graph.get_input_tensor(0,0)
-                # Tengine Lite might require explicit shape setting for the input tensor if it's dynamic
+                self.tengine_input_tensor = self.tengine_graph.get_input_tensor(0,0)
+                # Tengine might require explicit shape setting for the input tensor if it's dynamic
                 # For YOLO, input shape is usually fixed, e.g., [1, 3, imgsz, imgsz]
-                # input_dims_from_model = self.tengine_lite_input_tensor.dims # e.g. [1, 3, 640, 640]
-                # self.tengine_lite_input_tensor.shape = input_dims_from_model # Set it if needed
+                # input_dims_from_model = self.tengine_input_tensor.dims # e.g. [1, 3, 640, 640]
+                # self.tengine_input_tensor.shape = input_dims_from_model # Set it if needed
 
-                self.tengine_lite_output_tensor = self.tengine_lite_graph.get_output_tensor(0,0)
+                self.tengine_output_tensor = self.tengine_graph.get_output_tensor(0,0)
                 
-                # Some Tengine Lite versions/models might benefit from or require a prerun after loading
-                # self.tengine_lite_graph.prerun()
+                # Some Tengine versions/models might benefit from or require a prerun after loading
+                # self.tengine_graph.prerun()
                 
-                self.use_tengine_lite = True
-                self.logger.info(f"Tengine Lite initialized successfully with model: {self.model_path} (Format: {tengine_model_format})")
-                self.logger.info(f"Tengine Lite Input Tensor Dims: {self.tengine_lite_input_tensor.dims}, Output Tensor Dims: {self.tengine_lite_output_tensor.dims}")
+                self.use_tengine = True
+                self.logger.info(f"Tengine initialized successfully with model: {self.model_path} (Format: {tengine_model_format})")
+                self.logger.info(f"Tengine Input Tensor Dims: {self.tengine_input_tensor.dims}, Output Tensor Dims: {self.tengine_output_tensor.dims}")
             except Exception as e_tengine_init:
-                self.logger.warning(f"Tengine Lite initialization failed: {e_tengine_init}. Will use ONNX Runtime if available.")
-                self.use_tengine_lite = False
-                # Clean up partial Tengine Lite resources if any step failed
-                if self.tengine_lite_graph: del self.tengine_lite_graph
-                if self.tengine_lite_ctx: del self.tengine_lite_ctx
-                self.tengine_lite_graph, self.tengine_lite_ctx = None, None
-        elif not TENGINE_LITE_AVAILABLE and yolo_config.get('tengine_lite_enable', False):
-            self.logger.warning("Tengine Lite is enabled in config, but the 'tengine.lite' Python library was not found.")
+                self.logger.warning("Tengine was enabled but graph is not available. Falling back to ONNX Runtime if available.")
+                self.use_tengine = False
+                # Clean up partial Tengine resources if any step failed
+                if self.tengine_graph: del self.tengine_graph
+                if self.tengine_ctx: del self.tengine_ctx
+                self.tengine_graph, self.tengine_ctx = None, None
+        elif not TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
+            self.logger.warning("Tengine is enabled in config, but the 'tengine' Python library was not found.")
         else:
-            self.logger.info("Tengine Lite is not enabled in config or not available. Will attempt ONNX Runtime.")
+            self.logger.info("Tengine is not enabled in config or not available. Will attempt ONNX Runtime.")
 
         # Initialize ONNX model (as fallback or primary if Tengine Lite fails/unavailable)
         self.ort_session = None # Initialize to None
@@ -135,16 +135,16 @@ class SignDetector:
         except Exception as e:
             self.logger.error(f"Failed to load ONNX model during ONNX Runtime setup: {e}")
             # Do not raise here if Tengine Lite is already successfully initialized and is the primary
-            if not self.use_tengine_lite:
-                self.logger.error("Both Tengine Lite and ONNX Runtime failed to initialize.")
+            if not self.use_tengine:
+                self.logger.error("Both Tengine and ONNX Runtime failed to initialize.")
                 raise # Raise only if Tengine Lite is not available as primary
 
-        if self.use_tengine_lite:
-            self.logger.info(f"SignDetector initialized. Primary Engine: Tengine Lite. Fallback: ONNX Runtime (if initialized).")
+        if self.use_tengine:
+            self.logger.info(f"SignDetector initialized. Primary Engine: Tengine. Fallback: ONNX Runtime (if initialized).")
         elif self.ort_session:
-            self.logger.info(f"SignDetector initialized. Primary Engine: ONNX Runtime (Tengine Lite unavailable/disabled or failed).")
+            self.logger.info(f"SignDetector initialized. Primary Engine: ONNX Runtime (Tengine unavailable/disabled or failed).")
         else:
-            self.logger.error("SignDetector critical failure: NO inference engine (Tengine Lite or ONNX Runtime) could be initialized.")
+            self.logger.error("SignDetector critical failure: NO inference engine (Tengine or ONNX Runtime) could be initialized.")
         self.logger.info(f"SignDetector params: imgsz={self.imgsz}, confidence_threshold={self.confidence_threshold}, iou_threshold={self.iou_threshold}, draw_boxes={self.draw_boxes}")
 
     def preprocess(self, frame):
@@ -253,38 +253,32 @@ class SignDetector:
             inference_start = time.time()
             outputs = None
 
-            if self.use_tengine_lite and self.tengine_lite_graph:
+            if self.use_tengine and self.tengine_graph:
                 try:
-                    self.tengine_lite_input_tensor.set_data(img) # img is NCHW, float32
-                    # self.tengine_lite_graph.prerun() # If needed per run, but usually done once in init
-                    self.tengine_lite_graph.run()
-                    # self.tengine_lite_graph.postrun() # If needed per run
-                    raw_tengine_outputs = self.tengine_lite_output_tensor.get_data()
-                    outputs = np.array(raw_tengine_outputs) # Ensure it's a numpy array
-                    # Tengine Lite output shape might need reshaping if it's flat, e.g., to [1, num_classes+4, num_anchors]
-                    # Or if it matches ONNX output directly, e.g. [1, num_anchors, num_classes+4]
-                    # This depends on the model and Tengine's handling of ONNX ops.
-                    # For now, assume it's compatible or postprocess handles it.
-                    self.logger.debug(f"Tengine Lite inference successful. Output shape: {outputs.shape}")
+                    self.logger.debug("Running inference with Tengine...")
+                    self.tengine_input_tensor.buf = img
+                    self.tengine_graph.run()
+                    outputs = self.tengine_output_tensor.buf # If needed per run
+                    self.logger.debug(f"Tengine inference successful. Output shape: {outputs.shape}")
                 except Exception as e_tengine_runtime:
-                    self.logger.error(f"Tengine Lite runtime inference failed: {e_tengine_runtime}. Falling back to ONNX Runtime.", exc_info=True)
-                    self.use_tengine_lite = False # Disable Tengine Lite for subsequent calls in this session to avoid repeated errors
+                    self.logger.error(f"Tengine runtime inference failed: {e_tengine_runtime}. Falling back to ONNX Runtime.", exc_info=True)
+                    self.use_tengine = False # Disable Tengine for subsequent calls in this session to avoid repeated errors
                     outputs = None # Ensure outputs is None so ONNX path is taken
             
-            if outputs is None: # True if Tengine Lite was not used, or Tengine Lite failed
-                if self.ort_session:
-                    self.logger.debug("Using ONNX Runtime for inference.")
-                    try:
-                        outputs = self.ort_session.run(None, {'images': img})[0]
-                    except Exception as e_onnx_runtime:
-                        self.logger.error(f"ONNX Runtime inference failed: {e_onnx_runtime}", exc_info=True)
-                        outputs = None # Explicitly set to None on ONNX failure too
-                else:
-                    self.logger.error("Fallback ONNX Runtime session not available and Tengine Lite failed or was not used.")
-                    # No engine, cannot proceed, outputs remains None
+            # Fallback to ONNX Runtime if Tengine is not used or failed
+            elif self.ort_session:
+                self.logger.debug("Using ONNX Runtime for inference.")
+                try:
+                    outputs = self.ort_session.run(None, {'images': img})[0]
+                except Exception as e_onnx_runtime:
+                    self.logger.error(f"ONNX Runtime inference failed: {e_onnx_runtime}", exc_info=True)
+                    outputs = None # Explicitly set to None on ONNX failure too
+            else:
+                self.logger.error("Fallback ONNX Runtime session not available and Tengine failed or was not used.")
+                # No engine, cannot proceed, outputs remains None
 
             if outputs is None:
-                self.logger.error("Inference failed for all available engines or no engine was available.")
+                self.logger.error("No inference engine available (Tengine or ONNX Runtime).")
                 return [] # Return empty list if no output could be generated
                 
             self.logger.debug(f"Model output shape after inference: {outputs.shape}")
