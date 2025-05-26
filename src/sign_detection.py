@@ -54,6 +54,7 @@ def draw_boxes_on_image(img, boxes, class_ids, confidences, class_names):
 class SignDetector:
     def __init__(self, config_path='config/config.yaml'):
         self.logger = logging.getLogger(__name__)
+        self.logger.critical("--- SignDetector __init__ CALLED ---") # Prominent message
         self.config = load_config(config_path)
         yolo_config = self.config['yolo']
         self.imgsz = yolo_config['imgsz']
@@ -72,6 +73,8 @@ class SignDetector:
         self.use_tengine = False
         self.model_path = yolo_config['model_path'] # Store for convenience
 
+        self.logger.debug(f"SignDetector: TENGINE_AVAILABLE = {TENGINE_AVAILABLE}")
+        self.logger.debug(f"SignDetector: yolo_config.get('tengine_enable', False) = {yolo_config.get('tengine_enable', False)}")
         if TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
             try:
                 self.logger.info("Attempting to initialize Tengine...")
