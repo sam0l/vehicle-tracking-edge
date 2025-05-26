@@ -61,7 +61,26 @@ class SignDetector:
         try:
             sess_options = ort.SessionOptions()
             sess_options.intra_op_num_threads = self.intra_op_num_threads
-            self.ort_session = ort.InferenceSession(yolo_config['model_path'], sess_options=sess_options)
+
+            available_providers = ort.get_available_providers()
+            self.logger.info(f"Available ONNX Runtime Execution Providers: {available_providers}")
+
+            # Preferred execution providers for ARM Mali: ACL, then OpenCL, then CPU
+            # Ensure your ONNX Runtime build for ARM64 includes these providers.
+            preferred_providers = []
+            if 'ACLExecutionProvider' in available_providers:
+                preferred_providers.append('ACLExecutionProvider')
+            if 'OpenCLExecutionProvider' in available_providers:
+                preferred_providers.append('OpenCLExecutionProvider')
+            preferred_providers.append('CPUExecutionProvider') # Always include CPU as a fallback
+
+            self.logger.info(f"Attempting to initialize ONNX session with providers: {preferred_providers}")
+            self.ort_session = ort.InferenceSession(yolo_config['model_path'], sess_options=sess_options, providers=preferred_providers)
+            
+            current_provider = self.ort_session.get_providers()
+            self.logger.info(f"ONNX Runtime session initialized with provider(s): {current_provider}")
+            if not any(ep in ['ACLExecutionProvider', 'OpenCLExecutionProvider'] for ep in current_provider):
+                self.logger.warning("ONNX Runtime is NOT using a GPU Execution Provider (ACL or OpenCL). Inference will run on CPU.")
             output_shapes = [output.shape for output in self.ort_session.get_outputs()]
             self.logger.info(f"Initialized ONNX model: {yolo_config['model_path']}, output shapes: {output_shapes}")
         except Exception as e:

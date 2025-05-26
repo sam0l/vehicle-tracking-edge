@@ -33,12 +33,22 @@ yolo:
     - Stop
   intra_op_num_threads: 4
   draw_boxes: true
-gps:
-  port: "/dev/ttyUSB1"
-  baudrate: 115200
-  timeout: 1
-  power_delay: 2
-  agps_delay: 5
+gps_settings:
+  active_module: "sgps" # "sgps" or "gps"
+
+  # Config for the original AT-command based gps.py module
+  module_gps:
+    port: "/dev/ttyUSB1"
+    baudrate: 115200
+    timeout: 1
+    power_delay: 2
+    agps_delay: 5
+
+  # Config for the new NMEA-based sgps.py module
+  module_sgps:
+    port: "/dev/ttyS4"
+    baudrate: 9600
+    timeout: 1 # General serial timeout for NMEA reading
 imu:
   i2c_bus: 4
   i2c_addresses: ["0x68", "0x69"]  # Try both addresses due to floating AD0 pin

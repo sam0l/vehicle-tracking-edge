@@ -7,6 +7,17 @@ paho-mqtt>=1.6.1
 dynaconf>=3.1.9
 python-dateutil>=2.8.2
 pytz>=2021.3
+pynmea2>=1.18.0  # For parsing NMEA sentences in sgps.py
+opencv-python>=4.5.0 # For cv2 image processing
+PyYAML>=5.4.0       # For YAML parsing
+matplotlib>=3.3.0   # For plotting
+onnxruntime>=1.8.0  # For ONNX model inference
+Flask>=2.0.0        # For web server/API
+Flask-CORS>=3.0.0   # For Flask CORS handling
+python-dotenv>=0.19.0 # For loading .env files
+# Potentially platform-specific or assumed dependencies:
+RPi.GPIO>=0.7.0     # For Raspberry Pi GPIO, platform-specific
+filterpy>=1.4.5     # Assumed for 'kalmanfilter' import, please verify
 
 # Logging
 structlog>=21.5.0

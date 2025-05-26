@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../vehicle-tracking-frontend"
+		},
+		{
+			"path": "../../vehicle-tracking-backend"
+		}
+	],
+	"settings": {}
+}
