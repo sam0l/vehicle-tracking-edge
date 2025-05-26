@@ -1,5 +1,6 @@
 import overpass
 import logging
+from typing import Union
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 # or if the state (like endpoint, timeout) is meant to be module-global.
 API_CLIENT = overpass.API(timeout=30) # Set a reasonable timeout
 
-def get_speed_limit_for_location(latitude: float, longitude: float, radius_meters: int = 50) -> str | None:
+def get_speed_limit_for_location(latitude: float, longitude: float, radius_meters: int = 50) -> Union[str, None]:
     """
     Queries OpenStreetMap for the speed limit of a road near the given GPS coordinates.
 
