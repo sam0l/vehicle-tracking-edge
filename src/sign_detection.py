@@ -102,10 +102,11 @@ class SignDetector:
                 self.logger.info(f"Tengine initialized successfully with model: {self.model_path} (Format: {tengine_model_format})")
                 self.logger.info(f"Tengine Input Tensor Dims: {self.tengine_input_tensor.dims}, Output Tensor Dims: {self.tengine_output_tensor.dims}")
             except Exception as e_tengine_init:
-                self.logger.warning("Tengine was enabled but graph is not available. Falling back to ONNX Runtime if available.")
+                self.logger.error(f"Tengine graph initialization FAILED. Error: {e_tengine_init}", exc_info=True)
+                self.logger.warning("Tengine was enabled but graph is not available due to the error above. Falling back to ONNX Runtime if available.")
                 self.use_tengine = False
                 # Clean up partial Tengine resources if any step failed
-                if self.tengine_graph: del self.tengine_graph
+                if self.tengine_graph: del self.tengine_graph # Should be None if tg.Graph failed
                 if self.tengine_ctx: del self.tengine_ctx
                 self.tengine_graph, self.tengine_ctx = None, None
         elif not TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
