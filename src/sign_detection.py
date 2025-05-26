@@ -67,7 +67,7 @@ class SignDetector:
         self.draw_boxes = yolo_config.get('draw_boxes', False)
 
         # Tengine Initialization
-        self.tengine_ctx = None
+        # self.tengine_ctx = None # Context object not used with this Tengine API
         self.tengine_graph = None
         self.tengine_input_tensor = None
         self.tengine_output_tensor = None # Assuming single output for now
@@ -79,12 +79,19 @@ class SignDetector:
         if TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
             try:
                 self.logger.info("Attempting to initialize Tengine...")
+                self.logger.debug(f"Tengine: Calling tg.init_tengine()...")
+                tg.init_tengine()
+                self.logger.info("Tengine: tg.init_tengine() called.")
+
                 self.logger.debug(f"Tengine: Using model_path: {self.model_path}")
-                self.tengine_ctx = tg.Context()
                 tengine_model_format = yolo_config.get('tengine_model_format', 'onnx') # Default to onnx if not specified
                 self.logger.debug(f"Tengine: Using model_format: {tengine_model_format}")
-                self.logger.info(f"Tengine: Attempting to create graph with model: {self.model_path}, format: {tengine_model_format}")
-                self.tengine_graph = tg.Graph(self.tengine_ctx, tengine_model_format, self.model_path)
+                self.logger.info(f"Tengine: Attempting to create graph with tg.create_graph(None, '{tengine_model_format}', '{self.model_path}')")
+                self.tengine_graph = tg.create_graph(None, tengine_model_format, self.model_path)
+                
+                if self.tengine_graph is None:
+                    self.logger.error("Tengine: tg.create_graph returned None. Graph creation failed.")
+                    raise RuntimeError("Tengine tg.create_graph failed to return a graph object.") # Raise an error to be caught by the existing except block
                 self.logger.info("Tengine: Graph created successfully.")
                 
                 self.tengine_input_tensor = self.tengine_graph.get_input_tensor(0,0)
@@ -106,9 +113,9 @@ class SignDetector:
                 self.logger.warning("Tengine was enabled but graph is not available due to the error above. Falling back to ONNX Runtime if available.")
                 self.use_tengine = False
                 # Clean up partial Tengine resources if any step failed
-                if self.tengine_graph: del self.tengine_graph # Should be None if tg.Graph failed
-                if self.tengine_ctx: del self.tengine_ctx
-                self.tengine_graph, self.tengine_ctx = None, None
+                if self.tengine_graph: del self.tengine_graph
+                # self.tengine_ctx is no longer used with this API
+                self.tengine_graph = None
         elif not TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
             self.logger.warning("Tengine is enabled in config, but the 'tengine' Python library was not found.")
         else:
