@@ -18,6 +18,7 @@ python-dotenv>=0.19.0 # For loading .env files
 # Potentially platform-specific or assumed dependencies:
 RPi.GPIO>=0.7.0     # For Raspberry Pi GPIO, platform-specific
 filterpy>=1.4.5     # Assumed for 'kalmanfilter' import, please verify
+psutil-7.0.0
 
 # Logging
 structlog>=21.5.0
