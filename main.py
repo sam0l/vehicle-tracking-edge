@@ -17,6 +17,7 @@ from src.sim_monitor import SimMonitor
 from src.osm_speed_limit import get_speed_limit_for_location
 import threading
 import re
+from typing import Union, Tuple, List, Dict, Any, Optional
 
 
 class VehicleTracker:
@@ -788,7 +789,7 @@ class VehicleTracker:
         finally:
             self.cleanup()
             
-    def _parse_speed_from_label(self, label_str: str) -> int | None:
+    def _parse_speed_from_label(self, label_str: str) -> Union[int, None]:
         if not label_str:
             return None
         # Try to find numbers in labels like "speed_limit_60", "speed60", "60"
