@@ -75,9 +75,13 @@ class SignDetector:
         if TENGINE_AVAILABLE and yolo_config.get('tengine_enable', False):
             try:
                 self.logger.info("Attempting to initialize Tengine...")
+                self.logger.debug(f"Tengine: Using model_path: {self.model_path}")
                 self.tengine_ctx = tg.Context()
                 tengine_model_format = yolo_config.get('tengine_model_format', 'onnx') # Default to onnx if not specified
+                self.logger.debug(f"Tengine: Using model_format: {tengine_model_format}")
+                self.logger.info(f"Tengine: Attempting to create graph with model: {self.model_path}, format: {tengine_model_format}")
                 self.tengine_graph = tg.Graph(self.tengine_ctx, tengine_model_format, self.model_path)
+                self.logger.info("Tengine: Graph created successfully.")
                 
                 self.tengine_input_tensor = self.tengine_graph.get_input_tensor(0,0)
                 # Tengine might require explicit shape setting for the input tensor if it's dynamic

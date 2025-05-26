@@ -84,7 +84,7 @@ backend:
   sim_data_endpoint: "/sim-data"
   data_usage_endpoint: "/data-usage"
 logging:
-  level: "INFO"
+  level: "DEBUG"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "vehicle_tracker.log"
   offline_file: "offline_data.json"
