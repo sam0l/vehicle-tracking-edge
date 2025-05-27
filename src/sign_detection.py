@@ -90,6 +90,24 @@ class SignDetector:
                 self.logger.info("Tengine: Graph created successfully.")
 
                 self.tengine_input_tensor = self.tengine_graph.getInputTensor(0,0)
+                self.logger.debug(f"--- TENGINE INPUT TENSOR DEBUG --- dir(self.tengine_input_tensor): {dir(self.tengine_input_tensor)}")
+                try:
+                    # Attempt to get shape if a 'shape' attribute or 'get_shape' method exists
+                    if hasattr(self.tengine_input_tensor, 'shape') and self.tengine_input_tensor.shape is not None:
+                        self.logger.debug(f"Tengine input_tensor.shape: {self.tengine_input_tensor.shape}")
+                    elif hasattr(self.tengine_input_tensor, 'get_shape') and callable(self.tengine_input_tensor.get_shape):
+                        self.logger.debug(f"Tengine input_tensor.get_shape(): {self.tengine_input_tensor.get_shape()}")
+                    else:
+                        self.logger.debug("Tengine input_tensor does not have a direct .shape attribute or .get_shape() method visible here.")
+                    # You might also want to log other attributes like name, dtype if available from dir()
+                    if hasattr(self.tengine_input_tensor, 'name'):
+                         self.logger.debug(f"Tengine input_tensor.name: {self.tengine_input_tensor.name}")
+                    if hasattr(self.tengine_input_tensor, 'data_type'): # or dtype, etc.
+                         self.logger.debug(f"Tengine input_tensor.data_type: {self.tengine_input_tensor.data_type}")
+
+                except Exception as e_tensor_debug:
+                    self.logger.error(f"Error during Tengine input_tensor debug: {e_tensor_debug}")
+                self.logger.debug("--- END TENGINE INPUT TENSOR DEBUG ---")
                 # Tengine might require explicit shape setting for the input tensor if it's dynamic
                 # For YOLO, input shape is usually fixed, e.g., [1, 3, imgsz, imgsz]
                 # input_dims_from_model = self.tengine_input_tensor.dims # e.g. [1, 3, 640, 640]
