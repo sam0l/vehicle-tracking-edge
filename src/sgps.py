@@ -187,15 +187,41 @@ class SGPS:
     def get_current_location(self):
         """
         Return the current GPS data.
+        If no GPS fix, uses system time as a fallback for the timestamp and resets GPS fields.
         """
-        if not self.has_fix and (time.time() - self.last_data_time > 10): # If no fix and no data for 10s
-             self.logger.warning("No GPS fix or data recently.")
-             # Reset some values if stale and no fix
-             # self.latitude, self.longitude = 0.0, 0.0 # Keep last known if preferred
+        timestamp_to_return = None
+        timestamp_source = "unknown"  # Default to unknown
+
+        if self.has_fix and self.current_gps_datetime_utc:
+            timestamp_to_return = self.current_gps_datetime_utc.isoformat()
+            timestamp_source = "gps"
+            # GPS data (lat, lon, etc.) is assumed to be current from _parse_nmea_sentence
+        else:  # No fix, or fix but no valid GPS timestamp
+            system_now_utc = datetime.now(timezone.utc)
+            timestamp_to_return = system_now_utc.isoformat()
+            
+            if not self.has_fix:
+                timestamp_source = "system"
+                self.logger.warning("No GPS fix. Using system time for timestamp. GPS data fields reset.")
+                # Reset GPS-specific data to indicate no valid fix data
+                self.latitude = 0.0
+                self.longitude = 0.0
+                self.altitude = 0.0
+                self.speed_knots = 0.0  # speed_kmh is derived from this
+                self.speed_kmh = 0.0
+                self.course = 0.0
+                self.satellites = 0
+                self.hdop = 0.0 # Using 0.0 for consistency, could be 99.99 to match NMEA 'no data'
+                # self.current_gps_datetime_utc might be None or stale; new timestamp is system_now_utc
+            else:  # This case means self.has_fix is True, but self.current_gps_datetime_utc is None
+                timestamp_source = "system_fallback_despite_fix"
+                self.logger.warning("GPS fix reported, but no valid GPS timestamp available. Using system time.")
+                # GPS fields (lat, lon etc.) might still be valid from parsing, so we don't reset them here necessarily
+                # unless they are also found to be unreliable.
 
         return {
-            'timestamp': self.current_gps_datetime_utc.isoformat() if self.current_gps_datetime_utc else None, # Changed to combined UTC datetime
-            # 'datestamp': self.datestamp.isoformat() if self.datestamp else None, # Removed
+            'timestamp': timestamp_to_return,
+            'timestamp_source': timestamp_source,
             'latitude': self.latitude,
             'longitude': self.longitude,
             'altitude': self.altitude,
@@ -203,7 +229,7 @@ class SGPS:
             'course': self.course,
             'satellites': self.satellites,
             'hdop': self.hdop,
-            'has_fix': self.has_fix
+            'has_fix': self.has_fix  # This remains the ground truth from NMEA parsing
         }
 
     def close(self):
