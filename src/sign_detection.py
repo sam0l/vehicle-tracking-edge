@@ -267,14 +267,19 @@ class SignDetector:
             if self.use_tengine and self.tengine_graph:
                 try:
                     self.logger.debug("Running inference with Tengine...")
-                    self.tengine_input_tensor.buf = img
+                    # Ensure input_data is C-contiguous and float32 for Tengine
+                    contiguous_img = np.ascontiguousarray(img, dtype=np.float32)
+                    self.tengine_input_tensor.buf = contiguous_img
                     self.tengine_graph.run()
-                    outputs = self.tengine_output_tensor.buf # If needed per run
-                    self.logger.debug(f"Tengine inference successful. Output shape: {outputs.shape}")
+                    outputs = self.tengine_output_tensor.buf # Get the output buffer
+                    # The .shape attribute might not exist on the buffer directly.
+                    # We'll address how to get Tengine output shape/dims later if needed.
+                    # For now, let's confirm inference runs.
+                    # self.logger.debug(f"Tengine inference successful. Output shape: {outputs.shape}") 
                 except Exception as e_tengine_runtime:
                     self.logger.error(f"Tengine runtime inference failed: {e_tengine_runtime}. Falling back to ONNX Runtime.", exc_info=True)
-                    self.use_tengine = False # Disable Tengine for subsequent calls in this session to avoid repeated errors
-                    outputs = None # Ensure outputs is None so ONNX path is taken
+                    self.use_tengine = False # Disable Tengine for subsequent calls
+                    outputs = None # Ensure ONNX path is taken
             
             # Fallback to ONNX Runtime if Tengine is not used or failed
             elif self.ort_session:
