@@ -170,7 +170,7 @@ class SignDetector:
             if not any(ep in ['ACLExecutionProvider', 'OpenCLExecutionProvider'] for ep in current_provider):
                 self.logger.warning("ONNX Runtime is NOT using a GPU Execution Provider (ACL or OpenCL). Inference will run on CPU.")
             output_shapes = [output.shape for output in self.ort_session.get_outputs()]
-            self.logger.info(f"Initialized ONNX model: {yolo_config['model_path']}, output shapes: {output_shapes}")
+            self.logger.info(f"Initialized ONNX model: {onnx_load_path}, output shapes: {output_shapes}")
         except Exception as e:
             self.logger.error(f"Failed to load ONNX model during ONNX Runtime setup: {e}")
             # Do not raise here if Tengine Lite is already successfully initialized and is the primary
@@ -291,41 +291,37 @@ class SignDetector:
             preprocess_time = time.time() - preprocess_start
             inference_start = time.time()
             outputs = None
+            inference_engine_used = "None"
 
             if self.use_tengine and self.tengine_graph:
                 try:
                     self.logger.debug("Running inference with Tengine...")
-                    # Ensure input_data is C-contiguous and float32 for Tengine
                     contiguous_img = np.ascontiguousarray(img, dtype=np.float32)
                     self.tengine_input_tensor.buf = contiguous_img
                     self.tengine_graph.run()
-                    outputs = self.tengine_output_tensor.buf # Get the output buffer
-                    # The .shape attribute might not exist on the buffer directly.
-                    # We'll address how to get Tengine output shape/dims later if needed.
-                    # For now, let's confirm inference runs.
-                    # self.logger.debug(f"Tengine inference successful. Output shape: {outputs.shape}") 
+                    outputs = self.tengine_output_tensor.buf
+                    inference_engine_used = "Tengine"
+                    # self.logger.debug(f"Tengine inference successful. Output shape: {outputs.shape}") # Shape might not be available on buf
                 except Exception as e_tengine_runtime:
-                    self.logger.error(f"Tengine runtime inference failed: {e_tengine_runtime}. Falling back to ONNX Runtime.", exc_info=True)
-                    self.use_tengine = False # Disable Tengine for subsequent calls
-                    outputs = None # Ensure ONNX path is taken
+                    self.logger.error(f"Tengine runtime inference failed: {e_tengine_runtime}. Falling back to ONNX Runtime for this frame.", exc_info=True)
+                    self.use_tengine = False # Disable Tengine for subsequent calls to avoid repeated errors
+                    outputs = None # Ensure outputs is None before ONNX attempt for this frame
             
-            # Fallback to ONNX Runtime if Tengine is not used or failed
-            elif self.ort_session:
-                self.logger.debug("Using ONNX Runtime for inference.")
+            # If Tengine was not used OR Tengine failed (outputs is None from the Tengine block)
+            if outputs is None and self.ort_session:
+                self.logger.debug("Using ONNX Runtime for inference (either primary or as fallback for current frame).")
                 try:
                     outputs = self.ort_session.run(None, {'images': img})[0]
+                    inference_engine_used = "ONNXRuntime"
                 except Exception as e_onnx_runtime:
                     self.logger.error(f"ONNX Runtime inference failed: {e_onnx_runtime}", exc_info=True)
                     outputs = None # Explicitly set to None on ONNX failure too
-            else:
-                self.logger.error("Fallback ONNX Runtime session not available and Tengine failed or was not used.")
-                # No engine, cannot proceed, outputs remains None
-
+            
             if outputs is None:
-                self.logger.error("No inference engine available (Tengine or ONNX Runtime).")
+                self.logger.error("No inference could be completed by Tengine or ONNX Runtime for this frame.")
                 return [] # Return empty list if no output could be generated
-                
-            self.logger.debug(f"Model output shape after inference: {outputs.shape}")
+            
+            self.logger.debug(f"Inference completed using: {inference_engine_used}. Model output shape: {outputs.shape}")
             inference_time = time.time() - inference_start
             postprocess_start = time.time()
             boxes, confidences, class_ids = self.postprocess(outputs)
