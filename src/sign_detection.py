@@ -89,33 +89,13 @@ class SignDetector:
                 self.tengine_graph = tg.graph.Graph(self.tengine_ctx, tengine_model_format, self.model_path)
                 self.logger.info("Tengine: Graph created successfully.")
 
-                # --- BEGIN TEMPORARY DEBUGGING CODE ---
-                self.logger.critical("--- DEBUGGING TENGINE GRAPH OBJECT ---")
-                try:
-                    self.logger.critical(f"dir(self.tengine_graph): {dir(self.tengine_graph)}")
-                    
-                    # Try to see if common attributes exist
-                    if hasattr(self.tengine_graph, 'inputs'):
-                        self.logger.critical(f"self.tengine_graph.inputs: {self.tengine_graph.inputs}")
-                    if hasattr(self.tengine_graph, 'outputs'):
-                        self.logger.critical(f"self.tengine_graph.outputs: {self.tengine_graph.outputs}")
-                    if hasattr(self.tengine_graph, 'tensors'):
-                        self.logger.critical(f"self.tengine_graph.tensors: {self.tengine_graph.tensors}")
-                    if hasattr(self.tengine_graph, '_input_tensor'): # Example of a private-like attribute
-                         self.logger.critical(f"self.tengine_graph._input_tensor: {self.tengine_graph._input_tensor}")
-
-                except Exception as e_debug:
-                    self.logger.error(f"Error during Tengine graph debug: {e_debug}")
-                self.logger.critical("--- END DEBUGGING TENGINE GRAPH OBJECT ---")
-                # --- END TEMPORARY DEBUGGING CODE ---
-                
-                self.tengine_input_tensor = self.tengine_graph.get_input_tensor(0,0)
+                self.tengine_input_tensor = self.tengine_graph.getInputTensor(0,0)
                 # Tengine might require explicit shape setting for the input tensor if it's dynamic
                 # For YOLO, input shape is usually fixed, e.g., [1, 3, imgsz, imgsz]
                 # input_dims_from_model = self.tengine_input_tensor.dims # e.g. [1, 3, 640, 640]
                 # self.tengine_input_tensor.shape = input_dims_from_model # Set it if needed
 
-                self.tengine_output_tensor = self.tengine_graph.get_output_tensor(0,0)
+                self.tengine_output_tensor = self.tengine_graph.getOutputTensor(0,0)
                 
                 # Some Tengine versions/models might benefit from or require a prerun after loading
                 # self.tengine_graph.prerun()
