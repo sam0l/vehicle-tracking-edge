@@ -307,6 +307,7 @@ class SignDetector:
                     self.use_tengine = False # Disable Tengine for subsequent calls to avoid repeated errors
                     outputs = None # Ensure outputs is None before ONNX attempt for this frame
             
+            self.logger.debug(f"State before ONNX fallback check: outputs is None? {outputs is None}, self.ort_session is not None? {self.ort_session is not None}")
             # If Tengine was not used OR Tengine failed (outputs is None from the Tengine block)
             if outputs is None and self.ort_session:
                 self.logger.debug("Using ONNX Runtime for inference (either primary or as fallback for current frame).")
