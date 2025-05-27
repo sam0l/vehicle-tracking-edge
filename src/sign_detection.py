@@ -102,7 +102,7 @@ class SignDetector:
                 
                 self.use_tengine = True
                 self.logger.info(f"Tengine initialized successfully with model: {self.model_path} (Format: {tengine_model_format})")
-                self.logger.info(f"Tengine Input Tensor Dims: {self.tengine_input_tensor.dims}, Output Tensor Dims: {self.tengine_output_tensor.dims}")
+            # self.logger.info(f"Tengine Input Tensor Dims: {self.tengine_input_tensor.dims}, Output Tensor Dims: {self.tengine_output_tensor.dims}") # Commented out due to AttributeError with .dims
             except Exception as e_tengine_init:
                 self.logger.error(f"Tengine graph initialization FAILED. Error: {e_tengine_init}", exc_info=True)
                 self.logger.warning("Tengine was enabled but graph is not available due to the error above. Falling back to ONNX Runtime if available.")
