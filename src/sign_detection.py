@@ -109,15 +109,6 @@ class SignDetector:
                     self.logger.error(f"Error during Tengine input_tensor debug: {e_tensor_debug}")
                 self.logger.debug("--- END TENGINE INPUT TENSOR DEBUG ---")
 
-                # Some Tengine versions/models might benefit from or require a prerun after loading
-                self.logger.info("Tengine: Attempting to call prerun()...")
-                try:
-                    self.tengine_graph.prerun() # Perform prerun
-                    self.logger.info("Tengine: prerun() completed.")
-                except Exception as e_prerun:
-                    self.logger.error(f"Tengine: prerun() failed: {e_prerun}", exc_info=True)
-                    # Decide if this is a fatal error for Tengine initialization or just a warning
-
                 # Tengine might require explicit shape setting for the input tensor if it's dynamic
                 # For YOLO, input shape is usually fixed, e.g., [1, 3, imgsz, imgsz]
                 # input_dims_from_model = self.tengine_input_tensor.dims # e.g. [1, 3, 640, 640]
@@ -163,7 +154,16 @@ class SignDetector:
             preferred_providers.append('CPUExecutionProvider') # Always include CPU as a fallback
 
             self.logger.info(f"Attempting to initialize ONNX session with providers: {preferred_providers}")
-            self.ort_session = ort.InferenceSession(yolo_config['model_path'], sess_options=sess_options, providers=preferred_providers)
+            
+            onnx_load_path = yolo_config['model_path']
+            if onnx_load_path.endswith('.tm'):
+                original_tm_path = onnx_load_path
+                onnx_load_path = original_tm_path.replace('.tm', '.onnx')
+                self.logger.info(f"ONNX: Configured model_path '{original_tm_path}' appears to be a Tengine model. Attempting to load derived ONNX path: '{onnx_load_path}'")
+            else:
+                self.logger.info(f"ONNX: Using configured model_path directly: '{onnx_load_path}'")
+
+            self.ort_session = ort.InferenceSession(onnx_load_path, sess_options=sess_options, providers=preferred_providers)
             
             current_provider = self.ort_session.get_providers()
             self.logger.info(f"ONNX Runtime session initialized with provider(s): {current_provider}")
