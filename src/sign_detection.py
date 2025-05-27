@@ -108,6 +108,16 @@ class SignDetector:
                 except Exception as e_tensor_debug:
                     self.logger.error(f"Error during Tengine input_tensor debug: {e_tensor_debug}")
                 self.logger.debug("--- END TENGINE INPUT TENSOR DEBUG ---")
+
+                # Some Tengine versions/models might benefit from or require a prerun after loading
+                self.logger.info("Tengine: Attempting to call prerun()...")
+                try:
+                    self.tengine_graph.prerun() # Perform prerun
+                    self.logger.info("Tengine: prerun() completed.")
+                except Exception as e_prerun:
+                    self.logger.error(f"Tengine: prerun() failed: {e_prerun}", exc_info=True)
+                    # Decide if this is a fatal error for Tengine initialization or just a warning
+
                 # Tengine might require explicit shape setting for the input tensor if it's dynamic
                 # For YOLO, input shape is usually fixed, e.g., [1, 3, imgsz, imgsz]
                 # input_dims_from_model = self.tengine_input_tensor.dims # e.g. [1, 3, 640, 640]
