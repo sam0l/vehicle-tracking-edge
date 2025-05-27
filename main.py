@@ -61,7 +61,8 @@ class VehicleTracker:
             self.config['camera']['device_id'],
             self.config['camera']['width'],
             self.config['camera']['height'],
-            self.config['camera']['fps']
+            self.config['camera']['fps'],
+            self.config['camera'].get('fourcc', 'MJPG') # Pass fourcc, defaulting to MJPG if not in config
         )
         try:
             self.sign_detector = SignDetector(config_path)
