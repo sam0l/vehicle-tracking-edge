@@ -2,6 +2,7 @@ import serial
 import time
 import logging
 import pynmea2
+from datetime import datetime, timezone, date, time as dt_time # Added datetime, timezone, date, dt_time
 
 class SGPS:
     def __init__(self, port, baudrate, timeout=1, fix_check_interval=5):
@@ -30,8 +31,8 @@ class SGPS:
         self.course = 0.0
         self.satellites = 0
         self.hdop = 0.0
-        self.timestamp = None # UTC time from GPS
-        self.datestamp = None # UTC date from GPS
+        self.current_gps_datetime_utc = None # Replaces timestamp and datestamp
+        self._last_rmc_date = None # To store date from RMC for use by GGA
         self.has_fix = False
 
         # For simulating fix_check_interval if needed, though NMEA provides fix status directly
@@ -73,33 +74,55 @@ class SGPS:
             self.last_data_time = time.time()
 
             if isinstance(msg, pynmea2.types.talker.GGA):
-                self.timestamp = msg.timestamp
-                if msg.latitude:
-                    self.latitude = msg.latitude
-                if msg.longitude:
-                    self.longitude = msg.longitude
-                if msg.altitude:
-                    self.altitude = msg.altitude
-                self.satellites = msg.num_sats
-                if msg.horizontal_dilution:
-                    self.hdop = msg.horizontal_dilution
-                self.has_fix = msg.gps_qual > 0
-                self.logger.debug(f"Parsed GGA: Lat={self.latitude}, Lon={self.longitude}, Alt={self.altitude}, Sats={self.satellites}, Fix={self.has_fix}")
+                # GGA provides timestamp (time part)
+                current_time_from_msg = msg.timestamp # This is a datetime.time object
+                if current_time_from_msg:
+                    # Try to combine with existing date from RMC, or use today's date as a fallback
+                    current_date_part = self._last_rmc_date if self._last_rmc_date else date.today()
+
+                    if isinstance(current_time_from_msg, dt_time) and isinstance(current_date_part, date):
+                        try:
+                            # Update current_gps_datetime_utc only if we have a valid date and time
+                            self.current_gps_datetime_utc = datetime.combine(current_date_part, current_time_from_msg).replace(tzinfo=timezone.utc)
+                        except Exception as e: # Broad exception for safety during combine
+                            self.logger.warning(f"GGA: Could not combine date '{current_date_part}' and time '{current_time_from_msg}'. Error: {e}")
+                    # else: # Log if types are not as expected, or if current_time_from_msg is None
+                        # self.logger.debug(f"GGA: msg.timestamp '{current_time_from_msg}' or date part '{current_date_part}' not suitable for combine.")
+
+                # Continue parsing other GGA fields
+                if msg.latitude is not None: self.latitude = msg.latitude
+                if msg.longitude is not None: self.longitude = msg.longitude
+                if msg.altitude is not None: self.altitude = msg.altitude
+                if hasattr(msg, 'num_sats') and msg.num_sats is not None: self.satellites = msg.num_sats
+                if hasattr(msg, 'horizontal_dilution') and msg.horizontal_dilution is not None: self.hdop = msg.horizontal_dilution
+                if hasattr(msg, 'gps_qual') and msg.gps_qual is not None: self.has_fix = msg.gps_qual > 0
+                
+                log_time_str = self.current_gps_datetime_utc.isoformat() if self.current_gps_datetime_utc else "N/A"
+                self.logger.debug(f"Parsed GGA: Time={log_time_str}, Lat={self.latitude:.5f}, Lon={self.longitude:.5f}, Alt={self.altitude}, Sats={self.satellites}, Fix={self.has_fix}, HDOP={self.hdop}")
 
             elif isinstance(msg, pynmea2.types.talker.RMC):
-                self.timestamp = msg.timestamp
-                self.datestamp = msg.datestamp # RMC has date
-                if msg.latitude:
-                    self.latitude = msg.latitude
-                if msg.longitude:
-                    self.longitude = msg.longitude
-                if msg.spd_over_grnd_kts:
+                # RMC provides both datestamp and timestamp
+                if msg.datestamp and msg.timestamp:
+                    if isinstance(msg.datestamp, date) and isinstance(msg.timestamp, dt_time):
+                        try:
+                            self.current_gps_datetime_utc = datetime.combine(msg.datestamp, msg.timestamp).replace(tzinfo=timezone.utc)
+                            self._last_rmc_date = msg.datestamp # Cache the date from RMC
+                        except Exception as e: # Broad exception for safety
+                             self.logger.warning(f"RMC: Could not combine date '{msg.datestamp}' and time '{msg.timestamp}'. Error: {e}")
+                    # else: # Log if types are not as expected
+                        # self.logger.debug(f"RMC: msg.datestamp '{msg.datestamp}' or msg.timestamp '{msg.timestamp}' not suitable for combine.")
+                
+                # Continue parsing other RMC fields
+                if msg.latitude is not None: self.latitude = msg.latitude
+                if msg.longitude is not None: self.longitude = msg.longitude
+                if hasattr(msg, 'spd_over_grnd_kts') and msg.spd_over_grnd_kts is not None:
                     self.speed_knots = msg.spd_over_grnd_kts
-                    self.speed_kmh = self.speed_knots * 1.852 # Convert knots to km/h
-                if msg.true_course:
-                    self.course = msg.true_course
-                self.has_fix = msg.status == 'A' # 'A' for Active/OK, 'V' for Void/Warning
-                self.logger.debug(f"Parsed RMC: Lat={self.latitude}, Lon={self.longitude}, Speed={self.speed_kmh} km/h, Course={self.course}, Fix={self.has_fix}")
+                    self.speed_kmh = self.speed_knots * 1.852
+                if hasattr(msg, 'true_course') and msg.true_course is not None: self.course = msg.true_course
+                if hasattr(msg, 'status') and msg.status is not None: self.has_fix = msg.status == 'A'
+                
+                log_time_str = self.current_gps_datetime_utc.isoformat() if self.current_gps_datetime_utc else "N/A"
+                self.logger.debug(f"Parsed RMC: Time={log_time_str}, Lat={self.latitude:.5f}, Lon={self.longitude:.5f}, Speed={self.speed_kmh:.2f} km/h, Course={self.course}, Fix={self.has_fix}")
             
             elif isinstance(msg, pynmea2.types.talker.GSA):
                 # GSA can also provide fix status and HDOP
@@ -171,8 +194,8 @@ class SGPS:
              # self.latitude, self.longitude = 0.0, 0.0 # Keep last known if preferred
 
         return {
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-            'datestamp': self.datestamp.isoformat() if self.datestamp else None,
+            'timestamp': self.current_gps_datetime_utc.isoformat() if self.current_gps_datetime_utc else None, # Changed to combined UTC datetime
+            # 'datestamp': self.datestamp.isoformat() if self.datestamp else None, # Removed
             'latitude': self.latitude,
             'longitude': self.longitude,
             'altitude': self.altitude,
