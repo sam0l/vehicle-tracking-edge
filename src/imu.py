@@ -308,7 +308,8 @@ class IMU:
         
         # Set initial state
         self.is_stationary = True
-        self.consecutive_stationary_samples = 20  # Initialize with enough samples to be considered stationary
+        # Initialize with enough samples to be considered stationary, aligned with runtime logic
+        self.consecutive_stationary_samples = max(15, int(self.stationary_timeout * self.sample_rate))
         self.current_speed = 0.0
         
         self.logger.info("IMU calibration complete")
@@ -600,18 +601,21 @@ class IMU:
             if self.filtered_accel < self.stationary_threshold:
                 self.consecutive_stationary_samples += 1
                 
-                # After several consecutive low readings, confirm stationary state
-                if self.consecutive_stationary_samples >= 15:
+                # Determine required samples for stationary state based on timeout and sample rate
+                required_stationary_samples = max(15, int(self.stationary_timeout * self.sample_rate)) # Ensure a minimum
+                
+                # After enough consecutive low readings, confirm stationary state
+                if self.consecutive_stationary_samples >= required_stationary_samples:
                     if not self.is_stationary:
-                        self.logger.debug(f"Device is now stationary (accel={self.filtered_accel:.4f}g)")
+                        self.logger.info(f"Device is now stationary (accel={self.filtered_accel:.4f}g after {self.consecutive_stationary_samples} samples)")
                     self.is_stationary = True
                     
                     # When stationary, immediately zero the speed
                     self.current_speed = 0.0
                     
-                    # Also zero velocities in Kalman filter state
+                    # Also zero velocities and accelerations in Kalman filter state
                     if self.kalman_initialized:
-                        self.kf_state[2:6] = 0.0  # Zero out velocities and accelerations
+                        self.kf_state[2:6] = 0.0
             else:
                 # Above the threshold - potential movement detected
                 self.consecutive_stationary_samples = 0
@@ -955,7 +959,8 @@ class IMU:
                     # Explicitly set initial state to stationary
                     self.is_stationary = True
                     self.current_speed = 0.0
-                    self.consecutive_stationary_samples = 20  # Initialize with enough samples to be considered stationary
+                    # Initialize with enough samples to be considered stationary, aligned with runtime logic
+                    self.consecutive_stationary_samples = max(15, int(self.stationary_timeout * self.sample_rate))
                     
                     return True
                 self.logger.warning(f"Failed to initialize IMU at address 0x{addr:02x}")
